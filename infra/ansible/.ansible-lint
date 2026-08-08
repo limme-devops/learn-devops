@@ -1,0 +1,28 @@
+---
+profile: production
+
+exclude_paths:
+  - collections/
+  - .cache/
+  - inventories/*/generated/   # Terraform-generated, not hand-authored
+
+# Rules we hold ourselves to beyond the production profile.
+enable_list:
+  - args
+  - empty-string-compare
+  - no-log-password
+  - no-same-owner
+  - name[casing]
+
+skip_list:
+  # We intentionally use `latest` for the OS patch playbook — that is the point
+  # of a patch run. Every other use of `latest` remains an error.
+  - package-latest
+
+warn_list:
+  - experimental
+
+kinds:
+  - playbook: "playbooks/*.yml"
+  - tasks: "roles/*/tasks/*.yml"
+  - vars: "inventories/*/group_vars/*.yml"

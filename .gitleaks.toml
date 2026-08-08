@@ -1,0 +1,43 @@
+title = "learn-devops gitleaks config"
+
+# Start from the maintained default ruleset, then add our own.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "vault-token"
+description = "HashiCorp Vault token"
+regex = '''\b(hvs|hvb|hvr)\.[A-Za-z0-9_-]{20,}'''
+keywords = ["hvs.", "hvb.", "hvr."]
+
+[[rules]]
+id = "kubeconfig-client-key"
+description = "Embedded client key in kubeconfig"
+regex = '''client-key-data:\s*[A-Za-z0-9+/=]{100,}'''
+keywords = ["client-key-data"]
+
+[[rules]]
+id = "internal-db-url"
+description = "Database connection string with inline password"
+regex = '''(?i)(postgres|postgresql|mysql|mongodb)://[^:\s]+:[^@\s]{6,}@'''
+keywords = ["postgres://", "postgresql://", "mysql://", "mongodb://"]
+
+[[rules]]
+id = "ansible-vault-unencrypted-password"
+description = "Plaintext become/ansible password in vars"
+regex = '''(?i)^\s*ansible_(become_)?password\s*:\s*(?!\{\{|!vault)\S+'''
+keywords = ["ansible_password", "ansible_become_password"]
+
+[allowlist]
+description = "Known-safe placeholders and docs"
+paths = [
+  '''docs/.*\.md''',
+  '''.*README\.md''',
+  '''local-lab/.*''',
+]
+regexes = [
+  '''CHANGE_ME''',
+  '''<[A-Z_]+>''',
+  '''example\.com''',
+  '''sha256:0{16,}''',
+]

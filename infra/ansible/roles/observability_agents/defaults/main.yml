@@ -1,0 +1,5 @@
+---
+node_exporter_version: "1.8.2"
+promtail_version: "3.1.1"
+promtail_sha256: "CHANGE_ME_pin_the_real_checksum"
+otel_collector_version: "0.109.0"

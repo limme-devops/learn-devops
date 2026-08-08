@@ -1,0 +1,180 @@
+---
+# Rolling blue/green deployment across the VM pool (docs/10-deployment-strategies.md §3).
+#
+#   ansible-playbook -i inventories/prod/hosts.yml playbooks/deploy-app.yml \
+#     -e app_version=1.4.2
+#
+# Rollback is the same command with the previous version:
+#   -e app_version=1.4.1 -e rollback=true
+#
+# Safety properties this play guarantees:
+#   * one node at a time (serial), first failure stops the roll
+#   * node is drained from the LB before it is touched
+#   * node only returns to the LB after health + smoke pass
+#   * a soak pause between nodes gives alerts time to fire
+#   * the remaining nodes stay on the old version if anything fails
+
+- name: Pre-flight checks
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags: [always]
+  tasks:
+    - name: Require an explicit app_version
+      ansible.builtin.assert:
+        that:
+          - app_version is defined
+          - app_version | length > 0
+          - app_version != 'latest'
+        fail_msg: >-
+          app_version must be an explicit immutable version.
+          'latest' is never deployable (docs/00-master-plan.md §3).
+
+    - name: Refuse to deploy to prod during a freeze window
+      ansible.builtin.assert:
+        that: not (deploy_freeze | default(false) | bool)
+        fail_msg: "Change freeze is active. Emergency releases need named approval."
+      when: environment_name == 'prod' and not (rollback | default(false) | bool)
+
+    - name: Verify the artifact exists before touching any node
+      ansible.builtin.uri:
+        url: "{{ artifact_repo }}/{{ app_name }}/{{ app_version }}/{{ app_name }}-{{ app_version }}.tar.gz.sha256"
+        method: HEAD
+        status_code: [200]
+      register: artifact_check
+      # Discovering a missing artifact halfway through a rollout is avoidable.
+
+- name: Rolling deployment
+  hosts: app_servers
+  become: true
+  serial: "{{ deploy_serial | default(1) }}"
+  max_fail_percentage: 0 # any failure halts the rollout immediately
+  any_errors_fatal: false
+
+  vars:
+    app_name: payment-service
+    haproxy_backend: "{{ app_name }}_backend"
+
+  pre_tasks:
+    - name: Record the currently deployed version for rollback
+      ansible.builtin.slurp:
+        src: /opt/{{ app_name }}/VERSION
+      register: current_version_raw
+      failed_when: false
+      changed_when: false
+
+    - name: Expose previous version as a fact
+      ansible.builtin.set_fact:
+        previous_version: "{{ (current_version_raw.content | b64decode | trim) if current_version_raw.content is defined else 'none' }}"
+
+    - name: Announce
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ previous_version }} -> {{ app_version }}"
+
+    - name: Drain node from load balancer
+      community.general.haproxy:
+        state: disabled
+        host: "{{ inventory_hostname_short }}"
+        backend: "{{ haproxy_backend }}"
+        socket: /var/run/haproxy/admin.sock
+        drain: true # let in-flight requests finish; do not cut connections
+        wait: true
+        wait_interval: 2
+        wait_retries: 30
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['loadbalancers'] }}"
+      when: groups['loadbalancers'] is defined
+
+    - name: Allow in-flight requests to complete
+      ansible.builtin.wait_for:
+        timeout: "{{ drain_grace_seconds | default(30) }}"
+
+  roles:
+    - role: app_deploy
+      vars:
+        app_deploy_version: "{{ app_version }}"
+
+  post_tasks:
+    - name: Wait for the application to become healthy
+      ansible.builtin.uri:
+        url: "{{ app_health_url }}"
+        status_code: 200
+      register: health
+      retries: 30
+      delay: 5
+      until: health.status is defined and health.status == 200
+      changed_when: false
+
+    - name: Wait for readiness (dependencies reachable)
+      ansible.builtin.uri:
+        url: "{{ app_ready_url }}"
+        status_code: 200
+      register: ready
+      retries: 20
+      delay: 5
+      until: ready.status is defined and ready.status == 200
+      changed_when: false
+
+    - name: Verify the running version is the one we intended
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:8080/version"
+        return_content: true
+      register: version_check
+      changed_when: false
+      failed_when: app_version not in version_check.content
+
+    - name: Run node-local smoke test
+      ansible.builtin.command: /opt/{{ app_name }}/bin/smoke-test.sh
+      register: smoke
+      changed_when: false
+
+    - name: Return node to the load balancer
+      community.general.haproxy:
+        state: enabled
+        host: "{{ inventory_hostname_short }}"
+        backend: "{{ haproxy_backend }}"
+        socket: /var/run/haproxy/admin.sock
+        wait: true
+        wait_interval: 2
+        wait_retries: 30
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['loadbalancers'] }}"
+      when: groups['loadbalancers'] is defined
+
+    - name: Soak — give error-rate alerts time to fire before the next node
+      ansible.builtin.pause:
+        seconds: "{{ deploy_soak_seconds | default(60) }}"
+      when: not ansible_check_mode
+
+  handlers:
+    - name: Notify deployment channel
+      ansible.builtin.uri:
+        url: "{{ deploy_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          text: "{{ app_name }} {{ app_version }} deployed to {{ inventory_hostname }}"
+      delegate_to: localhost
+      become: false
+      when: deploy_webhook_url is defined
+
+- name: Post-deployment verification
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: End-to-end smoke test through the load balancer VIP
+      ansible.builtin.uri:
+        url: "https://{{ app_public_url | default('payments.' ~ dns_domain | default('bank.internal')) }}/healthz"
+        status_code: 200
+        validate_certs: true
+      retries: 5
+      delay: 10
+      changed_when: false
+
+    - name: Remind the operator to watch the dashboard
+      ansible.builtin.debug:
+        msg: >-
+          Deployment complete. Watch the SLO dashboard for 30 minutes
+          (docs/10-deployment-strategies.md §8). Rollback:
+          ansible-playbook ... -e app_version={{ hostvars[groups['app_servers'][0]]['previous_version'] | default('<previous>') }} -e rollback=true

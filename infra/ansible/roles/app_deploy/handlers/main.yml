@@ -1,0 +1,11 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart application
+  ansible.builtin.systemd:
+    name: "{{ app_name }}"
+    state: restarted
+  # The node is already drained from the LB at this point (deploy-app.yml
+  # pre_tasks), so a restart here is invisible to users.

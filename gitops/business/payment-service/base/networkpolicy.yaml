@@ -1,0 +1,128 @@
+---
+# Default deny — both directions. Everything below is an explicit exception.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payment-service-default-deny
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: payment-service
+  policyTypes: [Ingress, Egress]
+---
+# DNS. Forgetting this is the single most common "my NetworkPolicy broke
+# everything" cause: the pod resolves nothing and every dependency times out.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payment-service-allow-dns
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: payment-service
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+# Who may call this service.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payment-service-allow-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: payment-service
+  policyTypes: [Ingress]
+  ingress:
+    # The ingress controller (external traffic).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - { protocol: TCP, port: 8080 }
+    # Named internal callers only — no blanket namespace allow.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: account-service
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: notification-service
+      ports:
+        - { protocol: TCP, port: 8080 }
+    # Prometheus scrape.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - { protocol: TCP, port: 9090 }
+---
+# What this service may call. Note there is no rule for 0.0.0.0/0 — this pod
+# cannot reach the internet at all.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payment-service-allow-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: payment-service
+  policyTypes: [Egress]
+  egress:
+    # Its own PostgreSQL cluster — and only its own.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: data-postgres
+          podSelector:
+            matchLabels:
+              cnpg.io/cluster: payment-db
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # Vault, for dynamic credentials.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: vault
+      ports:
+        - { protocol: TCP, port: 8200 }
+    # Keycloak, for JWKS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: identity
+      ports:
+        - { protocol: TCP, port: 8443 }
+    # Object storage.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: data-minio
+      ports:
+        - { protocol: TCP, port: 9000 }
+    # Telemetry.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - { protocol: TCP, port: 4317 }
+    # Downstream service it legitimately calls.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ledger-service
+      ports:
+        - { protocol: TCP, port: 8080 }

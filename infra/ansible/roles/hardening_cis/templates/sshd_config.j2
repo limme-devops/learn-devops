@@ -1,0 +1,56 @@
+# Managed by Ansible — roles/hardening_cis. Validated with `sshd -t` before install.
+
+Port 22
+AddressFamily inet
+Protocol 2
+
+# --- Authentication --------------------------------------------------------
+PermitRootLogin {{ ssh_permit_root_login }}
+PasswordAuthentication {{ ssh_password_authentication }}
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+KerberosAuthentication no
+GSSAPIAuthentication no
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+
+# Vault-signed SSH certificates. Static authorized_keys files are the thing we
+# are trying to get rid of (docs/03-security-baseline.md §2).
+TrustedUserCAKeys /etc/ssh/trusted-user-ca-keys.pem
+AuthorizedKeysFile .ssh/authorized_keys
+
+AllowGroups {{ ssh_allow_groups }}
+MaxAuthTries 3
+MaxSessions 10
+MaxStartups 10:30:60
+LoginGraceTime 30
+
+# --- Crypto: modern algorithms only ---------------------------------------
+KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+HostKeyAlgorithms ssh-ed25519,rsa-sha2-512,rsa-sha2-256
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+
+# --- Session ---------------------------------------------------------------
+ClientAliveInterval 300
+ClientAliveCountMax 2
+TCPKeepAlive no
+X11Forwarding no
+AllowAgentForwarding no
+AllowTcpForwarding {{ 'yes' if ssh_allow_tcp_forwarding | default(false) else 'no' }}
+PermitTunnel no
+PermitUserEnvironment no
+IgnoreRhosts yes
+HostbasedAuthentication no
+Compression no
+
+# --- Logging: every session is an audit record -----------------------------
+LogLevel VERBOSE
+SyslogFacility AUTHPRIV
+PrintLastLog yes
+
+Banner /etc/issue.net
+Subsystem sftp /usr/libexec/openssh/sftp-server -l INFO -f AUTHPRIV
+UsePAM yes

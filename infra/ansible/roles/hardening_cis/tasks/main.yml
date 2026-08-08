@@ -1,0 +1,158 @@
+---
+# CIS hardening. The community RHEL9-CIS role does the bulk; this role applies
+# our documented exceptions and the controls the benchmark does not cover.
+
+- name: Apply the CIS benchmark role
+  ansible.builtin.include_role:
+    name: ansible-lockdown.rhel9_cis
+  vars:
+    rhel9cis_level_1: true
+    rhel9cis_level_2: "{{ cis_profile == 'level2' }}"
+    rhel9cis_selinux_disable: false
+    rhel9cis_rule_1_1_1_1: true
+    # Exceptions live in one place with a reason and an expiry. An undocumented
+    # skip here is an audit finding.
+    rhel9cis_skip_rules: "{{ cis_exceptions | map(attribute='rule') | list }}"
+
+- name: Record CIS exceptions as on-host evidence
+  ansible.builtin.copy:
+    dest: /etc/cis-exceptions.json
+    owner: root
+    group: root
+    mode: "0644"
+    content: "{{ cis_exceptions | to_nice_json }}"
+
+- name: Fail on expired CIS exceptions
+  ansible.builtin.assert:
+    that: item.expires > ansible_date_time.date
+    fail_msg: >-
+      CIS exception {{ item.rule }} expired on {{ item.expires }}.
+      Either remediate the control or renew the exception with Security.
+  loop: "{{ cis_exceptions }}"
+  loop_control:
+    label: "{{ item.rule }}"
+
+# --- SSH ------------------------------------------------------------------
+
+- name: Harden sshd
+  ansible.builtin.template:
+    src: sshd_config.j2
+    dest: /etc/ssh/sshd_config
+    owner: root
+    group: root
+    mode: "0600"
+    validate: "sshd -t -f %s" # never ship an sshd_config you cannot parse
+  notify: Restart sshd
+
+# --- SELinux ---------------------------------------------------------------
+
+- name: Enforce SELinux
+  ansible.posix.selinux:
+    policy: targeted
+    state: "{{ selinux_state }}"
+
+- name: Refuse to proceed if SELinux is not enforcing in production
+  ansible.builtin.assert:
+    that: ansible_selinux.mode == "enforcing"
+    fail_msg: "SELinux is {{ ansible_selinux.mode }}. Permissive is not a production state."
+  when: environment_tier == 'production'
+
+# --- Firewall: default deny ------------------------------------------------
+
+- name: Ensure firewalld is running
+  ansible.builtin.systemd:
+    name: firewalld
+    state: started
+    enabled: true
+
+- name: Set the default zone to drop
+  ansible.builtin.command: firewall-cmd --set-default-zone={{ firewall_default_zone }}
+  register: zone_result
+  changed_when: "'success' in zone_result.stdout"
+
+- name: Open only the ports this host's role requires
+  ansible.posix.firewalld:
+    port: "{{ item.port }}/{{ item.proto }}"
+    source: "{{ item.source | default(omit) }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ firewall_allowed_ports }}"
+  loop_control:
+    label: "{{ item.port }}/{{ item.proto }} from {{ item.source | default('any') }}"
+
+# --- Audit -----------------------------------------------------------------
+
+- name: Install audit rules
+  ansible.builtin.template:
+    src: audit.rules.j2
+    dest: /etc/audit/rules.d/99-bank.rules
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart auditd
+
+- name: Configure auditd retention
+  ansible.builtin.lineinfile:
+    path: /etc/audit/auditd.conf
+    regexp: '^max_log_file_action'
+    line: "max_log_file_action = {{ auditd_max_log_file_action }}"
+  notify: Restart auditd
+
+- name: Ship audit logs to the SIEM
+  ansible.builtin.template:
+    src: rsyslog-siem.conf.j2
+    dest: /etc/rsyslog.d/10-siem.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart rsyslog
+
+# --- File integrity --------------------------------------------------------
+
+- name: Initialise the AIDE database
+  ansible.builtin.command:
+    cmd: aide --init
+    creates: /var/lib/aide/aide.db.new.gz
+  async: 1800
+  poll: 60
+
+- name: Activate the AIDE database
+  ansible.builtin.command:
+    cmd: mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
+    creates: /var/lib/aide/aide.db.gz
+
+- name: Schedule the daily integrity check
+  ansible.builtin.cron:
+    name: "AIDE file integrity check"
+    job: "/usr/sbin/aide --check | /usr/bin/logger -t aide -p authpriv.warning"
+    special_time: null
+    minute: "{{ aide_check_schedule.split()[0] }}"
+    hour: "{{ aide_check_schedule.split()[1] }}"
+    user: root
+
+# --- Kernel ----------------------------------------------------------------
+
+- name: Apply kernel hardening parameters
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-hardening.conf
+    state: present
+    reload: true
+  loop: "{{ sysctl_hardening | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}={{ item.value }}"
+
+- name: Disable unused kernel modules
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/99-blacklist.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible — roles/hardening_cis
+      {% for mod in blacklisted_modules %}
+      install {{ mod }} /bin/false
+      blacklist {{ mod }}
+      {% endfor %}

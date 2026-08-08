@@ -1,0 +1,19 @@
+---
+vault_version: "1.17.6"
+vault_sha256: "CHANGE_ME_pin_the_real_checksum_from_the_release_page"
+
+# role_id is a non-secret identifier; secret_id is response-wrapped and
+# single-use. Both are supplied by the provisioning pipeline, not stored here.
+vault_role_id: "{{ lookup('env', 'VAULT_ROLE_ID') | default('', true) }}"
+vault_secret_id_wrapped: "{{ lookup('env', 'VAULT_SECRET_ID_WRAPPED') | default('', true) }}"
+
+vault_agent_templates:
+  - name: "{{ app_name | default('payment-service') }}.env"
+    template: app-secrets.env.j2
+
+# Database credentials are DYNAMIC: Vault mints a per-host PostgreSQL user with
+# a 1-hour lease and revokes it automatically. Nobody, including us, knows a
+# long-lived database password.
+vault_db_role: "{{ app_name | default('payment-service') }}-readwrite"
+vault_db_mount: "database"
+vault_kv_mount: "kv"

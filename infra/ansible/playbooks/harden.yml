@@ -1,0 +1,55 @@
+---
+# Hardening + compliance evidence. Run after any baseline change, and on a
+# schedule so drift is detected rather than discovered at audit.
+
+- name: Apply CIS hardening and produce compliance evidence
+  hosts: "{{ target | default('linux') }}"
+  become: true
+
+  roles:
+    - role: hardening_cis
+      tags: [hardening]
+
+  post_tasks:
+    - name: Install the OpenSCAP scanner
+      ansible.builtin.dnf:
+        name:
+          - openscap-scanner
+          - scap-security-guide
+        state: present
+
+    - name: Run the CIS benchmark scan
+      ansible.builtin.command:
+        cmd: >-
+          oscap xccdf eval
+          --profile xccdf_org.ssgproject.content_profile_cis{{ '_server_l1' if cis_profile == 'level1' else '' }}
+          --results /var/log/oscap-results.xml
+          --report /var/log/oscap-report.html
+          /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml
+      register: oscap
+      failed_when: false # rc=2 just means "some rules failed", which we want to see
+      changed_when: false
+
+    - name: Fetch the report for the compliance evidence pack
+      ansible.builtin.fetch:
+        src: /var/log/oscap-report.html
+        dest: "../../../compliance/evidence/{{ environment_name }}/{{ ansible_date_time.date }}/{{ inventory_hostname }}-oscap.html"
+        flat: true
+
+    - name: Extract the pass rate
+      ansible.builtin.shell: >-
+        set -o pipefail;
+        xmllint --xpath 'count(//*[local-name()="rule-result"][*[local-name()="result"]="pass"])'
+        /var/log/oscap-results.xml
+      args:
+        executable: /bin/bash
+      register: pass_count
+      changed_when: false
+
+    - name: Fail the run if the host is below the compliance floor
+      ansible.builtin.assert:
+        that: pass_count.stdout | int >= cis_minimum_passing_rules | default(180)
+        fail_msg: >-
+          {{ inventory_hostname }} is below the CIS compliance floor
+          ({{ pass_count.stdout }} rules passing). Review the report before
+          this host carries production traffic.

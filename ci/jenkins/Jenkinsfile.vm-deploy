@@ -1,0 +1,229 @@
+// VM-track deployment orchestration.
+//
+// Jenkins earns its place here for the things GitLab CI is awkward at:
+// long-running node-by-node rollouts, rich approval gates, and a rollback that
+// must run even when the main pipeline failed (docs/05-cicd-automation.md §4).
+
+pipeline {
+  agent { label 'ansible-controller' }
+
+  options {
+    timestamps()
+    ansiColor('xterm')
+    disableConcurrentBuilds()          // two rollouts at once will fight over the LB
+    buildDiscarder(logRotator(numToKeepStr: '50', artifactNumToKeepStr: '20'))
+    timeout(time: 2, unit: 'HOURS')
+  }
+
+  parameters {
+    choice(name: 'ENVIRONMENT', choices: ['dev', 'uat', 'prod'], description: 'Target environment')
+    string(name: 'APP_VERSION', defaultValue: '', description: 'Immutable version to deploy (never "latest")')
+    string(name: 'CHANGE_TICKET', defaultValue: '', description: 'Change ticket ID — required for prod')
+    booleanParam(name: 'DRY_RUN', defaultValue: false, description: 'Check mode only, change nothing')
+  }
+
+  environment {
+    VAULT_ADDR   = 'https://vault.bank.internal:8200'
+    ANSIBLE_DIR  = 'infra/ansible'
+    ANSIBLE_FORCE_COLOR = 'true'
+  }
+
+  stages {
+
+    stage('Validate inputs') {
+      steps {
+        script {
+          if (!params.APP_VERSION?.trim()) {
+            error('APP_VERSION is required.')
+          }
+          if (params.APP_VERSION == 'latest') {
+            error('"latest" is not deployable — it is not reproducible or rollback-able.')
+          }
+          if (params.ENVIRONMENT == 'prod' && !params.CHANGE_TICKET?.trim()) {
+            error('A change ticket is mandatory for production deployments.')
+          }
+          // Friday-afternoon prod deploys leave nobody around when it breaks.
+          if (params.ENVIRONMENT == 'prod') {
+            def now = new Date()
+            def day = now.format('EEE')
+            def hour = now.format('HH') as Integer
+            if (day == 'Fri' && hour >= 15) {
+              input message: 'Friday afternoon production deploy. Confirm the team is available all evening.',
+                    submitter: 'release-managers'
+            }
+          }
+        }
+      }
+    }
+
+    stage('Checkout') {
+      steps {
+        checkout scm
+        script {
+          env.GIT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+        }
+      }
+    }
+
+    stage('Record current version') {
+      steps {
+        script {
+          // Capture what is running BEFORE we change it. Improvising a rollback
+          // target during an incident is how the wrong version gets deployed.
+          env.PREVIOUS_VERSION = sh(
+            script: """
+              cd ${ANSIBLE_DIR} && ansible app_servers \
+                -i inventories/${params.ENVIRONMENT}/hosts.yml \
+                -m slurp -a 'src=/opt/payment-service/VERSION' 2>/dev/null \
+                | grep -oP '(?<=content.: .)[^"]+' | head -1 | base64 -d || echo 'unknown'
+            """,
+            returnStdout: true
+          ).trim()
+          echo "Currently deployed: ${env.PREVIOUS_VERSION}"
+          echo "Rolling forward to: ${params.APP_VERSION}"
+          currentBuild.description = "${params.ENVIRONMENT}: ${env.PREVIOUS_VERSION} -> ${params.APP_VERSION}"
+        }
+      }
+    }
+
+    stage('Lint and dry run') {
+      steps {
+        dir("${ANSIBLE_DIR}") {
+          sh 'ansible-lint'
+          sh """
+            ansible-playbook -i inventories/${params.ENVIRONMENT}/hosts.yml \
+              playbooks/deploy-app.yml \
+              -e app_version=${params.APP_VERSION} \
+              --check --diff
+          """
+        }
+      }
+    }
+
+    stage('Approval') {
+      when {
+        allOf {
+          expression { params.ENVIRONMENT == 'prod' }
+          expression { !params.DRY_RUN }
+        }
+      }
+      steps {
+        script {
+          // Two distinct approvers, matching the two-approver rule for prod.
+          def approver1 = input(
+            message: "Deploy ${params.APP_VERSION} to PRODUCTION? (approver 1 of 2)",
+            submitter: 'release-managers',
+            submitterParameter: 'approver'
+          )
+          def approver2 = input(
+            message: "Second approval required (approver 1 was ${approver1})",
+            submitter: 'platform-leads',
+            submitterParameter: 'approver'
+          )
+          if (approver1 == approver2) {
+            error('The two approvals must come from two different people.')
+          }
+          env.APPROVERS = "${approver1}, ${approver2}"
+          echo "Approved by: ${env.APPROVERS}"
+        }
+      }
+    }
+
+    stage('Deploy') {
+      when { expression { !params.DRY_RUN } }
+      steps {
+        withVault(
+          configuration: [vaultUrl: env.VAULT_ADDR, engineVersion: 2],
+          vaultSecrets: [[
+            path: "kv/ansible/${params.ENVIRONMENT}",
+            secretValues: [
+              [envVar: 'VAULT_ROLE_ID',           vaultKey: 'role_id'],
+              [envVar: 'VAULT_SECRET_ID_WRAPPED', vaultKey: 'secret_id_wrapped']
+            ]
+          ]]
+        ) {
+          dir("${ANSIBLE_DIR}") {
+            sh """
+              ansible-playbook -i inventories/${params.ENVIRONMENT}/hosts.yml \
+                playbooks/deploy-app.yml \
+                -e app_version=${params.APP_VERSION} \
+                -e change_ticket=${params.CHANGE_TICKET} \
+                --diff
+            """
+          }
+        }
+      }
+    }
+
+    stage('Smoke test') {
+      when { expression { !params.DRY_RUN } }
+      steps {
+        sh "./ci/scripts/smoke.sh ${params.ENVIRONMENT}"
+      }
+    }
+
+    stage('Soak') {
+      when {
+        allOf {
+          expression { params.ENVIRONMENT == 'prod' }
+          expression { !params.DRY_RUN }
+        }
+      }
+      steps {
+        script {
+          // Watch the SLO for 15 minutes before declaring victory. Many
+          // regressions only appear once real traffic has warmed the caches.
+          echo 'Soaking for 15 minutes — watching error rate.'
+          def errorRate = sh(
+            script: '''
+              sleep 900
+              curl -sG 'https://prometheus.bank.internal/api/v1/query' \
+                --data-urlencode 'query=sum(rate(http_requests_total{service="payment-service",status=~"5.."}[15m])) / sum(rate(http_requests_total{service="payment-service"}[15m]))' \
+                | jq -r '.data.result[0].value[1] // "0"'
+            ''',
+            returnStdout: true
+          ).trim() as Double
+
+          echo "Error rate over the soak window: ${errorRate}"
+          if (errorRate > 0.01) {
+            error("Error rate ${errorRate} exceeds 1% — rolling back.")
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    failure {
+      script {
+        if (env.PREVIOUS_VERSION && env.PREVIOUS_VERSION != 'unknown' && !params.DRY_RUN) {
+          echo "ROLLING BACK to ${env.PREVIOUS_VERSION}"
+          dir("${ANSIBLE_DIR}") {
+            sh """
+              ansible-playbook -i inventories/${params.ENVIRONMENT}/hosts.yml \
+                playbooks/deploy-app.yml \
+                -e app_version=${env.PREVIOUS_VERSION} \
+                -e rollback=true
+            """
+          }
+          sh "./ci/scripts/smoke.sh ${params.ENVIRONMENT} || echo 'Smoke test failed AFTER rollback — escalate now'"
+        }
+        slackSend(
+          channel: '#deploys',
+          color: 'danger',
+          message: "FAILED + ROLLED BACK: ${params.ENVIRONMENT} ${params.APP_VERSION} -> ${env.PREVIOUS_VERSION}\n${env.BUILD_URL}"
+        )
+      }
+    }
+    success {
+      slackSend(
+        channel: '#deploys',
+        color: 'good',
+        message: "Deployed ${params.APP_VERSION} to ${params.ENVIRONMENT} (ticket ${params.CHANGE_TICKET}, approved by ${env.APPROVERS ?: 'n/a'})"
+      )
+    }
+    always {
+      archiveArtifacts artifacts: '**/*.log', allowEmptyArchive: true
+    }
+  }
+}

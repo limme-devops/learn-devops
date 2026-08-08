@@ -1,0 +1,65 @@
+---
+# PROD group vars. NO SECRETS HERE — every credential is a Vault lookup.
+# gitleaks and the ansible-lint no-log-password rule both police this file.
+
+environment_name: prod
+environment_tier: production
+
+# --- connection ------------------------------------------------------------
+ansible_user: ansible
+ansible_python_interpreter: /usr/bin/python3.11
+# All prod access hops through the bastion. There is no direct route.
+ansible_ssh_common_args: >-
+  -o ProxyCommand="ssh -W %h:%p -q ansible@bastion.prod.bank.internal"
+  -o StrictHostKeyChecking=yes
+
+# --- core services ---------------------------------------------------------
+vault_addr: "https://vault.prod.bank.internal:8200"
+vault_namespace: "prod"
+keycloak_url: "https://sso.bank.internal"
+ntp_servers:
+  - ntp1.bank.internal
+  - ntp2.bank.internal
+dns_servers:
+  - 10.99.1.10
+  - 10.99.1.11
+search_domains:
+  - prod.bank.internal
+  - bank.internal
+
+# Internal mirrors only. Hosts have no direct internet route.
+package_repo_url: "https://satellite.bank.internal/pulp/content/prod"
+container_registry: "harbor.bank.internal"
+artifact_repo: "https://nexus.bank.internal/repository/releases"
+forward_proxy: "http://proxy.bank.internal:3128"
+no_proxy_hosts: ".bank.internal,10.0.0.0/8,127.0.0.1,localhost"
+
+# --- observability ---------------------------------------------------------
+prometheus_scrape_cidr: "10.20.64.0/20" # management zone
+loki_endpoint: "https://loki.prod.bank.internal/loki/api/v1/push"
+otel_endpoint: "https://otel.prod.bank.internal:4317"
+
+# --- hardening -------------------------------------------------------------
+cis_profile: level2
+selinux_state: enforcing
+firewall_default_zone: drop
+ssh_permit_root_login: "no"
+ssh_password_authentication: "no"
+ssh_allow_groups: "ansible sysadmins"
+auditd_max_log_file_action: keep_logs # never rotate away audit evidence
+aide_check_schedule: "0 3 * * *"
+
+# --- patching --------------------------------------------------------------
+patch_window_day: "Sat"
+patch_reboot_allowed: false # prod reboots are a separate, scheduled change
+
+# --- backup ----------------------------------------------------------------
+backup_tier: 0
+backup_target: "s3://backups-prod"
+backup_retention_days: 35
+
+# --- deployment ------------------------------------------------------------
+app_health_url: "http://127.0.0.1:8080/healthz"
+app_ready_url: "http://127.0.0.1:8080/ready"
+deploy_soak_seconds: 60 # pause between nodes so alerts have time to fire
+deploy_serial: 1

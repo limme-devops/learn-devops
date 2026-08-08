@@ -1,0 +1,46 @@
+---
+# Prod-only overrides. Everything not listed here is inherited from base, which
+# keeps the diff between environments small enough to actually review.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: payment-service
+spec:
+  strategy:
+    canary:
+      # Prod runs the full, slow canary. Dev promotes straight to 100%.
+      steps:
+        - setWeight: 5
+        - pause: { duration: 10m }
+        - setWeight: 25
+        - pause: { duration: 15m }
+        - setWeight: 50
+        - pause: { duration: 15m }
+        - setWeight: 100
+      analysis:
+        templates:
+          - templateName: payment-success-rate
+          - templateName: payment-latency
+          - templateName: payment-business-health   # prod also gates on business health
+        startingStep: 1
+        args:
+          - name: service-name
+            value: payment-service-canary
+  template:
+    spec:
+      containers:
+        - name: app
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              memory: 4Gi
+      # Production workloads run on dedicated nodes, away from dev/test noise.
+      nodeSelector:
+        workload-class: general
+        environment: prod
+      tolerations:
+        - key: production-only
+          operator: Exists
+          effect: NoSchedule

@@ -1,0 +1,51 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: payment-service-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: payments-alerts
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: payments-alerts
+    notifications.argoproj.io/subscribe.on-out-of-sync.slack: platform-drift
+spec:
+  project: business-prod
+
+  source:
+    repoURL: https://gitlab.bank.internal/platform/gitops.git
+    targetRevision: main
+    path: business/payment-service/overlays/prod
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: app-payment
+
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: false     # prod never auto-deletes; see bootstrap/argocd/root-app.yaml
+      allowEmpty: false
+    syncOptions:
+      - ApplyOutOfSyncOnly=true
+      - RespectIgnoreDifferences=true
+      - PruneLast=true
+    retry:
+      limit: 3
+      backoff: { duration: 30s, factor: 2, maxDuration: 5m }
+
+  # Fields that legitimately drift at runtime. Without these, Argo fights the
+  # HPA and the rollout controller forever and the app never reports Synced.
+  ignoreDifferences:
+    - group: argoproj.io
+      kind: Rollout
+      jsonPointers:
+        - /spec/replicas          # owned by the HPA
+    - group: ""
+      kind: Secret
+      name: payment-service-secrets
+      jsonPointers:
+        - /data                   # owned by External Secrets, rotates hourly
+
+  revisionHistoryLimit: 10

@@ -1,0 +1,25 @@
+---
+# Dev skips the canary entirely. A 40-minute progressive rollout in dev only
+# teaches developers to hate the pipeline; the canary exists to protect real
+# users, and dev has none.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: payment-service
+spec:
+  strategy:
+    canary:
+      steps:
+        - setWeight: 100
+      analysis: null
+      scaleDownDelaySeconds: 30
+  template:
+    spec:
+      containers:
+        - name: app
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi

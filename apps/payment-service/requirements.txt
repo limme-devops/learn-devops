@@ -1,0 +1,13 @@
+# The reference service intentionally uses only the standard library, so the
+# local lab needs no wheels and no network.
+#
+# When you add real dependencies, use hashes — `pip install --require-hashes`
+# (see the Dockerfile) refuses to install anything whose hash does not match,
+# which is what stops a compromised or typosquatted package from entering the
+# build. Generate them with:
+#
+#   pip-compile --generate-hashes requirements.in
+#
+# Example of the required format:
+# fastapi==0.115.0 \
+#     --hash=sha256:0000000000000000000000000000000000000000000000000000000000000000

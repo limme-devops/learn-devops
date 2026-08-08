@@ -1,0 +1,68 @@
+---
+# App-of-apps root. This is the ONLY thing applied to a cluster by hand:
+#   kubectl apply -f gitops/bootstrap/argocd/projects.yaml
+#   kubectl apply -f gitops/bootstrap/argocd/root-app.yaml
+# Everything else arrives through Argo from here on.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform-prod
+  source:
+    repoURL: https://gitlab.bank.internal/platform/gitops.git
+    targetRevision: main
+    path: apps/platform/prod
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      # selfHeal yes: manual cluster edits get reverted, and the resulting
+      # OutOfSync event tells us someone changed prod by hand.
+      selfHeal: true
+      # prune NO in prod: deleting a file must not silently delete a workload.
+      # Prune deliberately, with `argocd app sync --prune` and an approver.
+      prune: false
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
+  revisionHistoryLimit: 20
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root-business-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: business-prod
+  source:
+    repoURL: https://gitlab.bank.internal/platform/gitops.git
+    targetRevision: main
+    path: apps/business/prod
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: false
+    syncOptions:
+      - ApplyOutOfSyncOnly=true
+  revisionHistoryLimit: 20

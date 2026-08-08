@@ -1,0 +1,48 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: app-payment
+
+resources:
+  - ../../base
+
+# Dev tracks main. CI updates this digest on every merge, automatically.
+images:
+  - name: payment-service
+    newName: harbor.bank.internal/app/payment-service
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+replicas:
+  - name: payment-service
+    count: 2
+
+patches:
+  - path: fast-rollout-patch.yaml
+    target:
+      kind: Rollout
+      name: payment-service
+  # Dev has one node pool; the zone spread constraint would leave pods pending.
+  - target:
+      kind: Rollout
+      name: payment-service
+    patch: |
+      - op: remove
+        path: /spec/template/spec/topologySpreadConstraints/1
+
+configMapGenerator:
+  - name: payment-service-config
+    literals:
+      - ENVIRONMENT=dev
+      - LOG_LEVEL=DEBUG
+      - OTEL_TRACES_SAMPLER_ARG=1.0        # sample everything; volume is tiny
+      - FEATURE_NEW_SETTLEMENT_FLOW=true   # new features are on in dev by default
+      - RATE_LIMIT_PER_MINUTE=10000
+      - DB_POOL_SIZE=5
+      - CIRCUIT_BREAKER_ENABLED=true       # keep resilience behaviour identical to prod
+
+labels:
+  - pairs:
+      environment: dev
+      tier: nonproduction
+    includeSelectors: false

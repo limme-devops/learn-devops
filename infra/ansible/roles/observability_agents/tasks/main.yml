@@ -1,0 +1,140 @@
+---
+# node_exporter + promtail + otel-collector. Installed on every host so that
+# VM-track and K8s-track workloads land in the same Prometheus/Loki/Tempo.
+
+- name: Install node_exporter
+  ansible.builtin.include_role:
+    name: prometheus.prometheus.node_exporter
+  vars:
+    node_exporter_version: "{{ node_exporter_version }}"
+    node_exporter_binary_url: "{{ artifact_repo }}/prometheus/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+    node_exporter_web_listen_address: "0.0.0.0:9100"
+    node_exporter_enabled_collectors:
+      - systemd
+      - textfile:
+          directory: /var/lib/node_exporter/textfile_collector
+      - filesystem
+      - diskstats
+      - meminfo
+      - loadavg
+
+- name: Create the textfile collector directory
+  ansible.builtin.file:
+    path: /var/lib/node_exporter/textfile_collector
+    state: directory
+    owner: node-exp
+    group: node-exp
+    mode: "0775"
+
+# Backup success is exported as a metric so that "the backup did not run" is a
+# P1 alert rather than something discovered during a restore (docs/07 §5).
+- name: Install the backup-status exporter
+  ansible.builtin.copy:
+    dest: /usr/local/bin/export-backup-status.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # Managed by Ansible — roles/observability_agents
+      set -euo pipefail
+      OUT=/var/lib/node_exporter/textfile_collector/backup.prom
+      TMP="${OUT}.$$"
+      LAST=$(stat -c %Y /var/backups/.last_success 2>/dev/null || echo 0)
+      {
+        echo "# HELP backup_last_success_timestamp Unix time of last successful backup."
+        echo "# TYPE backup_last_success_timestamp gauge"
+        echo "backup_last_success_timestamp ${LAST}"
+      } > "${TMP}"
+      mv "${TMP}" "${OUT}"
+
+- name: Schedule the backup-status export
+  ansible.builtin.cron:
+    name: "export backup status metric"
+    minute: "*/5"
+    job: "/usr/local/bin/export-backup-status.sh"
+    user: root
+
+- name: Allow Prometheus to scrape from the management zone only
+  ansible.posix.firewalld:
+    port: "{{ item }}/tcp"
+    source: "{{ prometheus_scrape_cidr }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: [9100, 9080]
+
+# --- Logs ------------------------------------------------------------------
+
+- name: Install promtail
+  ansible.builtin.get_url:
+    url: "{{ artifact_repo }}/grafana/promtail-{{ promtail_version }}-linux-amd64.zip"
+    dest: /tmp/promtail.zip
+    checksum: "sha256:{{ promtail_sha256 }}"
+    mode: "0600"
+
+- name: Unpack promtail
+  ansible.builtin.unarchive:
+    src: /tmp/promtail.zip
+    dest: /usr/local/bin
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+    creates: /usr/local/bin/promtail-linux-amd64
+
+- name: Configure promtail
+  ansible.builtin.template:
+    src: promtail.yml.j2
+    dest: /etc/promtail.yml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart promtail
+
+- name: Install the promtail unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/promtail.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible — roles/observability_agents
+      [Unit]
+      Description=Promtail log shipper
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      User=root
+      ExecStart=/usr/local/bin/promtail-linux-amd64 -config.file=/etc/promtail.yml
+      Restart=on-failure
+      RestartSec=5s
+      NoNewPrivileges=true
+      ProtectSystem=full
+      ReadWritePaths=/var/lib/promtail
+
+      [Install]
+      WantedBy=multi-user.target
+  notify:
+    - Reload systemd
+    - Restart promtail
+
+- name: Ensure promtail state directory exists
+  ansible.builtin.file:
+    path: /var/lib/promtail
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Start observability agents
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - node_exporter
+    - promtail

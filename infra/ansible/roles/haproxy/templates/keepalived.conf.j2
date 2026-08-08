@@ -1,0 +1,47 @@
+# Managed by Ansible — roles/haproxy
+
+global_defs {
+    router_id {{ inventory_hostname_short }}
+    enable_script_security
+    script_user root
+}
+
+# The VIP follows HAProxy's real health, not just its process state.
+vrrp_script check_haproxy {
+    script "/etc/keepalived/check_haproxy.sh"
+    interval 2
+    timeout 3
+    weight -20     # drop priority below the peer's on failure
+    fall 2
+    rise 2
+}
+
+vrrp_instance VI_1 {
+    # First LB in the group is MASTER, the rest BACKUP.
+    state {{ 'MASTER' if groups['loadbalancers'][0] == inventory_hostname else 'BACKUP' }}
+    interface {{ haproxy_vrrp_interface }}
+    virtual_router_id {{ haproxy_vrrp_router_id }}
+    priority {{ 100 if groups['loadbalancers'][0] == inventory_hostname else 90 }}
+    advert_int 1
+
+    # Do not steal the VIP back automatically after recovery — an unnecessary
+    # second failover during an incident helps nobody.
+    nopreempt
+
+    authentication {
+        auth_type PASS
+        auth_pass {{ keepalived_auth_pass }}
+    }
+
+    virtual_ipaddress {
+        {{ haproxy_vip }}/24 dev {{ haproxy_vrrp_interface }}
+    }
+
+    track_script {
+        check_haproxy
+    }
+
+    notify_master "/usr/bin/logger -t keepalived 'BECAME MASTER for {{ haproxy_vip }}'"
+    notify_backup "/usr/bin/logger -t keepalived 'BECAME BACKUP for {{ haproxy_vip }}'"
+    notify_fault  "/usr/bin/logger -t keepalived 'FAULT state for {{ haproxy_vip }}'"
+}

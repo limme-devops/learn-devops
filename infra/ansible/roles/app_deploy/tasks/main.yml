@@ -1,0 +1,134 @@
+---
+# Deploys the application as a rootless Podman container under systemd.
+#
+# Same image as the Kubernetes track — one artifact, two runtimes. That is what
+# makes "build once, promote everywhere" true rather than aspirational.
+
+- name: Require an explicit version
+  ansible.builtin.assert:
+    that:
+      - app_deploy_version is defined
+      - app_deploy_version != 'latest'
+    fail_msg: "app_deploy_version must be an immutable version or digest, never 'latest'."
+
+- name: Create the service account
+  ansible.builtin.user:
+    name: "{{ app_user }}"
+    system: true
+    shell: /sbin/nologin
+    home: "{{ app_install_dir }}"
+    create_home: false
+
+- name: Enable lingering so the user unit survives logout
+  ansible.builtin.command:
+    cmd: loginctl enable-linger {{ app_user }}
+    creates: "/var/lib/systemd/linger/{{ app_user }}"
+
+- name: Create application directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ app_install_dir }}", mode: "0750" }
+    - { path: "{{ app_install_dir }}/bin", mode: "0750" }
+    - { path: "{{ app_install_dir }}/config", mode: "0750" }
+    - { path: "{{ app_data_dir }}", mode: "0750" }
+    - { path: "/var/log/{{ app_name }}", mode: "0750" }
+
+# --- Image ----------------------------------------------------------------
+
+- name: Log in to the internal registry with a short-lived Vault-issued token
+  containers.podman.podman_login:
+    registry: "{{ container_registry }}"
+    username: "{{ registry_credentials.username }}"
+    password: "{{ registry_credentials.password }}"
+  vars:
+    registry_credentials: >-
+      {{ lookup('community.hashi_vault.vault_kv2_get',
+                'ci/harbor-pull', url=vault_addr, engine_mount_point='kv').secret }}
+  become_user: "{{ app_user }}"
+  no_log: true
+
+- name: Verify the image signature before pulling it into the fleet
+  ansible.builtin.command:
+    cmd: >-
+      cosign verify
+      --certificate-identity-regexp '{{ cosign_identity_regexp }}'
+      --certificate-oidc-issuer '{{ cosign_oidc_issuer }}'
+      {{ container_registry }}/{{ app_image }}:{{ app_deploy_version }}
+  register: cosign_verify
+  changed_when: false
+  when: verify_image_signature | bool
+
+- name: Pull the application image
+  containers.podman.podman_image:
+    name: "{{ container_registry }}/{{ app_image }}:{{ app_deploy_version }}"
+    state: present
+    force: false
+  become_user: "{{ app_user }}"
+
+# --- Configuration ---------------------------------------------------------
+
+- name: Render application configuration
+  ansible.builtin.template:
+    src: app-config.yml.j2
+    dest: "{{ app_install_dir }}/config/application.yml"
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "0640"
+  notify: Restart application
+
+# Secrets are NOT rendered here. vault-agent writes them to tmpfs at
+# /run/secrets and the unit reads them from there — they never touch disk.
+- name: Confirm vault-agent has produced the secret file
+  ansible.builtin.stat:
+    path: "/run/secrets/{{ app_name }}.env"
+  register: secret_file
+  failed_when: not secret_file.stat.exists
+  changed_when: false
+
+- name: Install the smoke test
+  ansible.builtin.template:
+    src: smoke-test.sh.j2
+    dest: "{{ app_install_dir }}/bin/smoke-test.sh"
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "0750"
+
+# --- systemd unit ----------------------------------------------------------
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: app.service.j2
+    dest: "/etc/systemd/system/{{ app_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart application
+
+- name: Record the deployed version (read back on the next deploy for rollback)
+  ansible.builtin.copy:
+    content: "{{ app_deploy_version }}\n"
+    dest: "{{ app_install_dir }}/VERSION"
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "0644"
+  notify: Restart application
+
+- name: Ensure the service is enabled and running
+  ansible.builtin.systemd:
+    name: "{{ app_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Prune images older than the retention window
+  ansible.builtin.command:
+    cmd: podman image prune --all --force --filter "until={{ image_retention_hours }}h"
+  become_user: "{{ app_user }}"
+  changed_when: false

@@ -1,0 +1,86 @@
+---
+- name: Install HAProxy and keepalived
+  ansible.builtin.dnf:
+    name:
+      - haproxy
+      - keepalived
+      - socat # needed for the runtime admin socket the deploy playbook drives
+    state: present
+
+- name: Create the admin socket directory
+  ansible.builtin.file:
+    path: /var/run/haproxy
+    state: directory
+    owner: haproxy
+    group: haproxy
+    mode: "0750"
+
+- name: Allow HAProxy to bind non-local addresses (the VIP may not be here yet)
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_nonlocal_bind
+    value: "1"
+    sysctl_file: /etc/sysctl.d/99-haproxy.conf
+    state: present
+    reload: true
+
+- name: Deploy the HAProxy configuration
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "haproxy -c -f %s" # a broken config must never reach a reload
+    backup: true
+  notify: Reload haproxy
+
+- name: Deploy the keepalived configuration
+  ansible.builtin.template:
+    src: keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart keepalived
+
+- name: Install the VIP health check script
+  ansible.builtin.copy:
+    dest: /etc/keepalived/check_haproxy.sh
+    owner: root
+    group: root
+    mode: "0750"
+    content: |
+      #!/usr/bin/env bash
+      # Managed by Ansible — roles/haproxy
+      # keepalived drops the VIP if HAProxy is not actually serving. Checking
+      # only the process would keep the VIP on a host that answers nothing.
+      set -euo pipefail
+      systemctl is-active --quiet haproxy || exit 1
+      curl -sf --max-time 2 http://127.0.0.1:{{ haproxy_stats_port }}/healthz >/dev/null || exit 1
+      exit 0
+
+- name: Open the frontend ports
+  ansible.posix.firewalld:
+    port: "{{ item }}/tcp"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop:
+    - 80
+    - 443
+
+- name: Allow VRRP between the load balancer pair
+  ansible.posix.firewalld:
+    rich_rule: 'rule protocol value="vrrp" accept'
+    permanent: true
+    immediate: true
+    state: enabled
+
+- name: Ensure services are running
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - haproxy
+    - keepalived

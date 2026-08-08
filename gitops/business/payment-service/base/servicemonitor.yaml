@@ -1,0 +1,31 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: payment-service
+  labels:
+    release: kube-prometheus-stack # must match the Prometheus serviceMonitorSelector
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: payment-service
+      monitoring: enabled
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      # Rollouts needs the pod-template-hash to distinguish canary from stable
+      # metrics. Without this label the canary analysis reads the whole fleet
+      # and never sees the canary failing.
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_label_rollouts_pod_template_hash]
+          targetLabel: rollouts_pod_template_hash
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+      metricRelabelings:
+        # Cardinality control: drop the per-connection Go runtime series we do
+        # not use. Cardinality is what kills Prometheus, not scrape frequency.
+        - sourceLabels: [__name__]
+          regex: "go_memstats_.*_bytes_total"
+          action: drop

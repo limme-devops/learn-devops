@@ -1,0 +1,26 @@
+---
+baseline_packages:
+  - chrony
+  - curl
+  - jq
+  - vim-enhanced
+  - bash-completion
+  - policycoreutils-python-utils
+  - firewalld
+  - audit
+  - aide
+  - socat
+  - tar
+  - python3-libselinux
+
+journald_max_use: "2G"
+journald_retention: "30day"
+
+sssd_enabled: true
+sssd_domain: "bank.internal"
+sssd_ldap_uri: "ldaps://ldap.bank.internal"
+
+# Groups permitted to sudo. Membership comes from AD, not from local files.
+sudo_admin_groups:
+  - sysadmins
+  - ansible

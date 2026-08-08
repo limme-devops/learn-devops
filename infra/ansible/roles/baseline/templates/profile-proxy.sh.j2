@@ -1,0 +1,9 @@
+# Managed by Ansible — roles/baseline
+# Hosts have no direct internet route; everything outbound is proxied and
+# allowlisted (docs/01-architecture.md §1).
+export http_proxy="{{ forward_proxy }}"
+export https_proxy="{{ forward_proxy }}"
+export no_proxy="{{ no_proxy_hosts }}"
+export HTTP_PROXY="{{ forward_proxy }}"
+export HTTPS_PROXY="{{ forward_proxy }}"
+export NO_PROXY="{{ no_proxy_hosts }}"

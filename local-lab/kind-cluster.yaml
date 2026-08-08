@@ -1,0 +1,52 @@
+---
+# A local cluster shaped like the real one: one control plane, three workers
+# with the same node labels the overlays select on. Node labels matter — if the
+# lab has no `workload-class` label, every prod manifest sits Pending and you
+# learn nothing.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: learn-devops
+
+networking:
+  # Kindnet does not enforce NetworkPolicy. Disabling it forces you to install
+  # Cilium, which means the NetworkPolicies in this repo are actually TESTED
+  # locally rather than discovered to be wrong in production.
+  disableDefaultCNI: true
+  kubeProxyMode: none
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/16"
+
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 8080
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 8443
+        protocol: TCP
+
+  - role: worker
+    labels:
+      workload-class: general
+      topology.kubernetes.io/zone: zone-a
+
+  - role: worker
+    labels:
+      workload-class: general
+      topology.kubernetes.io/zone: zone-b
+
+  - role: worker
+    labels:
+      workload-class: data
+      topology.kubernetes.io/zone: zone-c
+
+featureGates:
+  # Match what RKE2 has enabled in the real clusters.
+  InPlacePodVerticalScaling: true

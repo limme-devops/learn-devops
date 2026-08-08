@@ -1,0 +1,52 @@
+---
+# Argo Rollouts needs THREE services for the nginx canary:
+#  - stable : selector pinned to the stable ReplicaSet
+#  - canary : selector pinned to the canary ReplicaSet
+#  - root   : what everything else in the cluster talks to
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service-stable
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: payment-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service-canary
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: payment-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service
+  labels:
+    monitoring: enabled
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: payment-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP

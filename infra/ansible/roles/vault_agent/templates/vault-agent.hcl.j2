@@ -1,0 +1,70 @@
+# Managed by Ansible — roles/vault_agent
+
+pid_file = "/run/vault-agent.pid"
+
+vault {
+  address = "{{ vault_addr }}"
+  {% if vault_namespace is defined %}
+  namespace = "{{ vault_namespace }}"
+  {% endif %}
+  ca_cert = "/etc/pki/tls/certs/bank-internal-ca.pem"
+
+  retry {
+    num_retries = 5
+  }
+}
+
+auto_auth {
+  method "approle" {
+    mount_path = "auth/approle"
+    config = {
+      role_id_file_path                   = "/etc/vault-agent/role_id"
+      secret_id_file_path                 = "/etc/vault-agent/secret_id"
+      # The wrapped secret_id is single-use: consumed at boot, then removed.
+      # Replay by an attacker who later reads the file is impossible.
+      secret_id_response_wrapping_path    = "auth/approle/role/{{ app_name | default('app') }}/secret-id"
+      remove_secret_id_file_after_reading = true
+    }
+  }
+
+  # The token itself is never written to disk — only kept in the agent's memory
+  # and served over a local unix socket.
+  sink "file" {
+    config = {
+      path = "/run/secrets/.vault-token"
+      mode = 0400
+    }
+  }
+}
+
+# Local proxy so the application can talk to Vault without holding a token.
+listener "unix" {
+  address     = "/run/vault-agent.sock"
+  tls_disable = true
+}
+
+cache {
+  use_auto_auth_token = true
+}
+
+template_config {
+  exit_on_retry_failure = true
+  static_secret_render_interval = "5m"
+}
+
+{% for tpl in vault_agent_templates %}
+template {
+  source      = "/etc/vault-agent/{{ tpl.name }}.ctmpl"
+  destination = "/run/secrets/{{ tpl.name }}"
+  perms       = 0440
+  {% if app_group is defined %}
+  group       = "{{ app_group }}"
+  {% endif %}
+  error_on_missing_key = true
+
+  # On credential rotation, reload the app rather than restarting it. Vault
+  # rotates database leases hourly; an hourly restart would be an outage.
+  command = "/usr/bin/systemctl reload-or-restart {{ app_name | default('app') }}.service"
+  command_timeout = "60s"
+}
+{% endfor %}

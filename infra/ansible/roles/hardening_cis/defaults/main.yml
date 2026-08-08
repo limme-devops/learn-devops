@@ -1,0 +1,68 @@
+---
+cis_profile: level2
+selinux_state: enforcing
+firewall_default_zone: drop
+auditd_max_log_file_action: keep_logs
+aide_check_schedule: "0 3 * * *"
+cis_minimum_passing_rules: 180
+
+# Every exception needs a rule id, a reason, an owner and an EXPIRY DATE.
+# The role fails the run once an exception expires — that is the point.
+cis_exceptions: []
+# Example:
+# cis_exceptions:
+#   - rule: rhel9cis_rule_3_4_1_1
+#     reason: "nftables managed by the k8s CNI; firewalld rule conflicts with Cilium"
+#     owner: platform-engineering
+#     ticket: SEC-1042
+#     expires: "2026-12-31"
+
+# Opened per host role. Default is nothing but SSH from the bastion.
+firewall_allowed_ports:
+  - { port: 22, proto: tcp, source: "10.99.10.0/28" }
+
+sysctl_hardening:
+  # Network
+  net.ipv4.ip_forward: 0
+  net.ipv4.conf.all.send_redirects: 0
+  net.ipv4.conf.all.accept_redirects: 0
+  net.ipv4.conf.all.accept_source_route: 0
+  net.ipv4.conf.all.log_martians: 1
+  net.ipv4.conf.all.rp_filter: 1
+  net.ipv4.tcp_syncookies: 1
+  net.ipv6.conf.all.accept_ra: 0
+  net.ipv6.conf.all.accept_redirects: 0
+  # Kernel / memory
+  kernel.randomize_va_space: 2
+  kernel.kptr_restrict: 2
+  kernel.dmesg_restrict: 1
+  kernel.yama.ptrace_scope: 1
+  kernel.unprivileged_bpf_disabled: 1
+  net.core.bpf_jit_harden: 2
+  # Core dumps can contain keys and PII — never write them to disk.
+  fs.suid_dumpable: 0
+  kernel.core_pattern: "|/bin/false"
+  # Filesystem
+  fs.protected_hardlinks: 1
+  fs.protected_symlinks: 1
+  fs.protected_fifos: 2
+  fs.protected_regular: 2
+
+blacklisted_modules:
+  - cramfs
+  - freevxfs
+  - jffs2
+  - hfs
+  - hfsplus
+  - squashfs
+  - udf
+  - usb-storage # no USB mass storage in a data centre
+  - dccp
+  - sctp
+  - rds
+  - tipc
+  - firewire-core
+  - bluetooth
+
+siem_host: "siem.bank.internal"
+siem_port: 6514 # syslog over TLS

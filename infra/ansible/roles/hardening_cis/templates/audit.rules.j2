@@ -1,0 +1,52 @@
+## Managed by Ansible — roles/hardening_cis
+## Rules answer the auditor's question: who did what, when, as whom.
+
+# Reset
+-D
+-b 8192
+-f 1
+--backlog_wait_time 60000
+
+# --- Identity and access changes ------------------------------------------
+-w /etc/passwd -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/group -p wa -k identity
+-w /etc/gshadow -p wa -k identity
+-w /etc/sudoers -p wa -k privilege_escalation
+-w /etc/sudoers.d/ -p wa -k privilege_escalation
+-w /etc/ssh/sshd_config -p wa -k sshd_config
+
+# --- Privilege escalation --------------------------------------------------
+-a always,exit -F arch=b64 -S execve -C uid!=euid -F euid=0 -k setuid_exec
+-a always,exit -F arch=b64 -F euid=0 -F auid>=1000 -F auid!=unset -S execve -k root_action
+
+# --- Authentication events -------------------------------------------------
+-w /var/log/lastlog -p wa -k logins
+-w /var/run/faillock/ -p wa -k logins
+-w /var/log/sudo-io/ -p wa -k sudo_session
+
+# --- Data and secret access ------------------------------------------------
+-w /etc/pki/ -p wa -k pki_change
+-w /run/secrets/ -p r -k secret_read
+-w {{ app_install_dir | default('/opt/app') }}/config -p wa -k app_config
+
+# --- System state ----------------------------------------------------------
+-a always,exit -F arch=b64 -S adjtimex,settimeofday,clock_settime -k time_change
+-w /etc/localtime -p wa -k time_change
+-a always,exit -F arch=b64 -S sethostname,setdomainname -k system_locale
+-w /etc/selinux/ -p wa -k selinux_change
+-w /sbin/insmod -p x -k module_load
+-w /sbin/rmmod -p x -k module_load
+-a always,exit -F arch=b64 -S init_module,delete_module -k module_load
+
+# --- Container runtime -----------------------------------------------------
+-w /usr/bin/podman -p x -k container_exec
+-w /var/lib/containers/ -p wa -k container_change
+
+# --- Failed access attempts ------------------------------------------------
+-a always,exit -F arch=b64 -S open,openat,truncate,ftruncate,creat -F exit=-EACCES -F auid>=1000 -F auid!=unset -k access_denied
+-a always,exit -F arch=b64 -S open,openat,truncate,ftruncate,creat -F exit=-EPERM -F auid>=1000 -F auid!=unset -k access_denied
+
+# Make the rules immutable until reboot. Any attempt to change them is itself
+# an audited, alerting event.
+-e 2

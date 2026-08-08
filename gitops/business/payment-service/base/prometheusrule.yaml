@@ -1,0 +1,142 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: payment-service
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    # Multi-window, multi-burn-rate alerting on the 99.9% availability SLO.
+    # Fast burn pages; slow burn opens a ticket (docs/06-observability.md §4).
+    - name: payment-service.slo
+      rules:
+        - alert: PaymentServiceFastErrorBudgetBurn
+          expr: |
+            (
+              sum(rate(http_requests_total{service="payment-service",status=~"5.."}[1h]))
+              / sum(rate(http_requests_total{service="payment-service"}[1h]))
+            ) > (14.4 * 0.001)
+            and
+            (
+              sum(rate(http_requests_total{service="payment-service",status=~"5.."}[5m]))
+              / sum(rate(http_requests_total{service="payment-service"}[5m]))
+            ) > (14.4 * 0.001)
+          for: 2m
+          labels:
+            severity: critical
+            team: payments
+            page: "true"
+          annotations:
+            summary: "payment-service burning error budget at 14x ({{ $value | humanizePercentage }} errors)"
+            description: "At this rate the entire 30-day error budget is gone in ~2 days."
+            runbook_url: https://wiki.bank.internal/runbooks/payment-service-high-errors
+            dashboard_url: https://grafana.bank.internal/d/payment-red
+
+        - alert: PaymentServiceSlowErrorBudgetBurn
+          expr: |
+            (
+              sum(rate(http_requests_total{service="payment-service",status=~"5.."}[6h]))
+              / sum(rate(http_requests_total{service="payment-service"}[6h]))
+            ) > (6 * 0.001)
+          for: 15m
+          labels:
+            severity: warning
+            team: payments
+          annotations:
+            summary: "payment-service sustained error budget consumption"
+            runbook_url: https://wiki.bank.internal/runbooks/payment-service-slow-burn
+
+        - alert: PaymentServiceLatencySLOBreach
+          expr: |
+            histogram_quantile(0.99,
+              sum(rate(http_request_duration_seconds_bucket{service="payment-service"}[10m])) by (le)
+            ) > 0.3
+          for: 10m
+          labels:
+            severity: warning
+            team: payments
+          annotations:
+            summary: "p99 latency {{ $value | humanizeDuration }} exceeds the 300ms SLO"
+            runbook_url: https://wiki.bank.internal/runbooks/payment-service-latency
+
+    - name: payment-service.saturation
+      rules:
+        - alert: PaymentServiceCPUThrottling
+          expr: |
+            sum(rate(container_cpu_cfs_throttled_periods_total{container="app",pod=~"payment-service-.*"}[5m]))
+            / sum(rate(container_cpu_cfs_periods_total{container="app",pod=~"payment-service-.*"}[5m]))
+            > 0.25
+          for: 15m
+          labels: { severity: warning, team: payments }
+          annotations:
+            summary: "payment-service throttled {{ $value | humanizePercentage }} of CPU periods"
+            description: "Raise the CPU request, or remove the CPU limit if one was added."
+
+        - alert: PaymentServiceNearMemoryLimit
+          expr: |
+            max(container_memory_working_set_bytes{container="app",pod=~"payment-service-.*"})
+            / max(kube_pod_container_resource_limits{container="app",resource="memory",pod=~"payment-service-.*"})
+            > 0.9
+          for: 10m
+          labels: { severity: warning, team: payments }
+          annotations:
+            summary: "payment-service within 10% of its memory limit — OOMKill is imminent"
+            runbook_url: https://wiki.bank.internal/runbooks/payment-service-memory
+
+        - alert: PaymentServiceDBPoolExhausted
+          expr: |
+            db_connections_in_use{service="payment-service"}
+            / db_connections_max{service="payment-service"} > 0.9
+          for: 5m
+          labels: { severity: critical, team: payments, page: "true" }
+          annotations:
+            summary: "Database connection pool {{ $value | humanizePercentage }} used"
+            description: "Requests are about to start queueing. Check for slow queries or a leak."
+
+    - name: payment-service.deployment
+      rules:
+        - alert: PaymentServiceRolloutAborted
+          expr: |
+            rollout_info{name="payment-service",phase="Degraded"} == 1
+          for: 1m
+          labels: { severity: critical, team: payments, page: "true" }
+          annotations:
+            summary: "Canary analysis aborted the payment-service rollout"
+            description: >-
+              Traffic is back on the stable version. This is a silent-failure
+              trap: investigate WHY the canary failed, do not just retry.
+            runbook_url: https://wiki.bank.internal/runbooks/rollout-aborted
+
+        - alert: PaymentServicePodCrashLooping
+          expr: |
+            increase(kube_pod_container_status_restarts_total{pod=~"payment-service-.*"}[15m]) > 3
+          for: 5m
+          labels: { severity: critical, team: payments, page: "true" }
+          annotations:
+            summary: "{{ $labels.pod }} restarted {{ $value }} times in 15 minutes"
+            runbook_url: https://wiki.bank.internal/runbooks/crashloop
+
+    - name: payment-service.business
+      rules:
+        # The alert that matters most to the bank: money stopped moving.
+        - alert: PaymentCompletionRateDropped
+          expr: |
+            (
+              sum(rate(payments_completed_total[10m]))
+              / clamp_min(sum(rate(payments_initiated_total[10m])), 0.001)
+            ) < 0.95
+          for: 10m
+          labels: { severity: critical, team: payments, page: "true" }
+          annotations:
+            summary: "Only {{ $value | humanizePercentage }} of initiated payments are completing"
+            runbook_url: https://wiki.bank.internal/runbooks/payment-completion-drop
+
+        - alert: PaymentReconciliationDrift
+          expr: abs(payment_ledger_drift_total) > 0
+          for: 5m
+          labels: { severity: critical, team: payments, page: "true" }
+          annotations:
+            summary: "Ledger reconciliation drift detected: {{ $value }}"
+            description: "Money is unaccounted for. Escalate to Finance Ops immediately."
+            runbook_url: https://wiki.bank.internal/runbooks/reconciliation-drift

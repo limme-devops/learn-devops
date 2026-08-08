@@ -1,0 +1,15 @@
+---
+- name: Restart sshd
+  ansible.builtin.systemd:
+    name: sshd
+    state: restarted
+
+# auditd refuses systemctl restart by design; use the service script.
+- name: Restart auditd
+  ansible.builtin.command: /usr/sbin/service auditd restart
+  changed_when: true
+
+- name: Restart rsyslog
+  ansible.builtin.systemd:
+    name: rsyslog
+    state: restarted

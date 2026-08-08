@@ -1,0 +1,36 @@
+---
+# Return the current host to the pool — but only after it proves it is healthy.
+# Never re-enable a node you have not health-checked; that is how you turn a
+# one-node problem into a fleet-wide outage.
+
+- name: Verify the application is healthy before re-enabling
+  ansible.builtin.uri:
+    url: "{{ app_health_url }}"
+    status_code: 200
+  register: health
+  retries: 30
+  delay: 5
+  until: health.status is defined and health.status == 200
+  changed_when: false
+
+- name: Verify the application is ready to serve
+  ansible.builtin.uri:
+    url: "{{ app_ready_url }}"
+    status_code: 200
+  register: ready
+  retries: 20
+  delay: 5
+  until: ready.status is defined and ready.status == 200
+  changed_when: false
+
+- name: Re-enable {{ inventory_hostname_short }} in all load balancers
+  community.general.haproxy:
+    state: enabled
+    host: "{{ inventory_hostname_short }}"
+    backend: "{{ haproxy_backend | default(app_name ~ '_backend') }}"
+    socket: /var/run/haproxy/admin.sock
+    wait: true
+    wait_interval: 2
+    wait_retries: 30
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['loadbalancers'] | default([]) }}"

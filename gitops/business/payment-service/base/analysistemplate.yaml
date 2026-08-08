@@ -1,0 +1,84 @@
+---
+# Canary analysis. These queries are the automated gate that decides whether a
+# release proceeds — a human watching a dashboard is not a gate.
+#
+# The rollouts_pod_template_hash selector is essential: without it the query
+# averages canary errors across the healthy stable pods and never trips.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: payment-success-rate
+spec:
+  args:
+    - name: service-name
+  metrics:
+    - name: success-rate
+      interval: 1m
+      count: 5
+      # Two consecutive failures abort. One allows for a single scrape blip.
+      failureLimit: 1
+      # If Prometheus itself is unreachable we do NOT promote blindly.
+      inconclusiveLimit: 2
+      successCondition: result[0] >= 0.99
+      provider:
+        prometheus:
+          address: http://prometheus-operated.monitoring.svc:9090
+          query: |
+            sum(rate(http_requests_total{
+              service="{{args.service-name}}",
+              status!~"5.."
+            }[2m]))
+            /
+            sum(rate(http_requests_total{
+              service="{{args.service-name}}"
+            }[2m]))
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: payment-latency
+spec:
+  args:
+    - name: service-name
+  metrics:
+    - name: p99-latency
+      interval: 1m
+      count: 5
+      failureLimit: 1
+      inconclusiveLimit: 2
+      # 300ms is the SLO from docs/slo.md. The canary gate and the SLO must be
+      # the same number, or one of them is lying.
+      successCondition: result[0] <= 0.300
+      provider:
+        prometheus:
+          address: http://prometheus-operated.monitoring.svc:9090
+          query: |
+            histogram_quantile(0.99,
+              sum(rate(http_request_duration_seconds_bucket{
+                service="{{args.service-name}}"
+              }[2m])) by (le)
+            )
+---
+# Business-level guard. Technical metrics can look perfect while the service
+# silently stops doing its job — a canary that returns 200 for every payment
+# and processes none passes both checks above.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: payment-business-health
+spec:
+  args:
+    - name: service-name
+  metrics:
+    - name: payment-completion-rate
+      interval: 2m
+      count: 5
+      failureLimit: 1
+      successCondition: result[0] >= 0.95
+      provider:
+        prometheus:
+          address: http://prometheus-operated.monitoring.svc:9090
+          query: |
+            sum(rate(payments_completed_total{service="{{args.service-name}}"}[5m]))
+            /
+            clamp_min(sum(rate(payments_initiated_total{service="{{args.service-name}}"}[5m])), 0.001)

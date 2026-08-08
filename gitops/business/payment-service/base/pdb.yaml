@@ -1,0 +1,14 @@
+---
+# Without a PDB, draining a node for patching can evict every replica at once.
+# minAvailable (not maxUnavailable) so the guarantee scales with the HPA.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: payment-service
+spec:
+  minAvailable: 51%
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: payment-service
+  # Do not let a stuck, permanently-unhealthy pod block a node drain forever.
+  unhealthyPodEvictionPolicy: AlwaysAllow

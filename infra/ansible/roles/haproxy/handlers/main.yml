@@ -1,0 +1,13 @@
+---
+# Reload, not restart: a reload hands sockets to the new process without
+# dropping established connections. Restarting an LB drops every in-flight
+# request in the estate.
+- name: Reload haproxy
+  ansible.builtin.systemd:
+    name: haproxy
+    state: reloaded
+
+- name: Restart keepalived
+  ansible.builtin.systemd:
+    name: keepalived
+    state: restarted

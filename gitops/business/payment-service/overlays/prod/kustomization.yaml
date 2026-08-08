@@ -1,0 +1,51 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: app-payment
+
+resources:
+  - ../../base
+  - ingress.yaml
+
+# THE PROMOTION POINT.
+#
+# CI writes this digest after the image passed every gate in UAT. Promoting to
+# prod is a one-line commit here — the same bytes that were tested, never a
+# rebuild. `newTag` is deliberately absent: a tag is mutable, a digest is not.
+images:
+  - name: payment-service
+    newName: harbor.bank.internal/app/payment-service
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+replicas:
+  - name: payment-service
+    count: 6
+
+patches:
+  - path: resources-patch.yaml
+    target:
+      kind: Rollout
+      name: payment-service
+
+configMapGenerator:
+  - name: payment-service-config
+    literals:
+      - ENVIRONMENT=prod
+      - LOG_LEVEL=INFO
+      - OTEL_TRACES_SAMPLER_ARG=0.1        # 10% sampling: full tracing at prod volume is unaffordable
+      - FEATURE_NEW_SETTLEMENT_FLOW=false  # dark launch; released by flag, not by deploy
+      - RATE_LIMIT_PER_MINUTE=1000
+      - DB_POOL_SIZE=20
+      - CIRCUIT_BREAKER_ENABLED=true
+
+# Rotates the pod annotation when config changes, so a ConfigMap edit actually
+# restarts pods instead of silently doing nothing until the next unrelated deploy.
+generatorOptions:
+  disableNameSuffixHash: false
+
+labels:
+  - pairs:
+      environment: prod
+      tier: production
+    includeSelectors: false

@@ -1,0 +1,115 @@
+---
+# argo-cd Helm chart values (prod). Applied once at bootstrap, then managed by
+# Argo itself.
+global:
+  domain: argocd.prod.bank.internal
+  logging:
+    format: json
+    level: info
+
+configs:
+  cm:
+    url: https://argocd.prod.bank.internal
+    # SSO via Keycloak — no local accounts, one offboarding action.
+    oidc.config: |
+      name: Keycloak
+      issuer: https://sso.bank.internal/realms/bank
+      clientID: argocd
+      clientSecret: $oidc.keycloak.clientSecret   # from the argocd-secret, synced by ESO
+      requestedScopes: ["openid", "profile", "email", "groups"]
+      requestedIDTokenClaims:
+        groups:
+          essential: true
+    # The built-in admin account is a shared credential — disable it. Break-glass
+    # goes through the documented procedure (docs/09-runbooks.md §3).
+    admin.enabled: "false"
+    exec.enabled: "false"          # no kubectl-exec-into-pods from the Argo UI
+    timeout.reconciliation: 180s
+    application.instanceLabelKey: argocd.argoproj.io/instance
+    resource.compareoptions: |
+      ignoreAggregatedRoles: true
+    # Argo Rollouts progressive delivery health checks
+    resource.customizations.health.argoproj.io_Rollout: |
+      hs = {}
+      if obj.status ~= nil and obj.status.phase ~= nil then
+        if obj.status.phase == "Healthy" then hs.status = "Healthy"
+        elseif obj.status.phase == "Degraded" then hs.status = "Degraded"
+        else hs.status = "Progressing" end
+      else hs.status = "Progressing" end
+      hs.message = obj.status ~= nil and obj.status.message or ""
+      return hs
+
+  rbac:
+    policy.default: "" # deny by default; membership comes from Keycloak groups
+    scopes: "[groups]"
+    policy.csv: |
+      p, role:readonly-all, applications, get, */*, allow
+      p, role:readonly-all, projects, get, *, allow
+      g, bank:engineering, role:readonly-all
+      g, bank:platform-engineering, role:admin
+      g, bank:release-managers, proj:business-prod:release-manager
+      g, bank:developers, proj:business-prod:developer
+
+  params:
+    server.insecure: false
+    controller.status.processors: 20
+    controller.operation.processors: 10
+
+controller:
+  replicas: 2
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { cpu: "2", memory: 4Gi }
+  metrics:
+    enabled: true
+    serviceMonitor: { enabled: true }
+
+server:
+  replicas: 2
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hostname: argocd.prod.bank.internal
+    tls: true
+    annotations:
+      cert-manager.io/cluster-issuer: vault-internal-ca
+      # Management-zone access only. The Argo UI is a deployment control plane.
+      nginx.ingress.kubernetes.io/whitelist-source-range: "10.20.64.0/20"
+  metrics:
+    enabled: true
+    serviceMonitor: { enabled: true }
+
+repoServer:
+  replicas: 2
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 2Gi }
+
+applicationSet:
+  replicas: 2
+
+notifications:
+  enabled: true
+  metrics:
+    enabled: true
+  notifiers:
+    service.slack: |
+      token: $slack-token
+  triggers:
+    trigger.on-sync-failed: |
+      - when: app.status.operationState.phase in ['Error', 'Failed']
+        send: [app-sync-failed]
+    trigger.on-health-degraded: |
+      - when: app.status.health.status == 'Degraded'
+        send: [app-health-degraded]
+    # Drift is an alert, not a silent fix: selfHeal reverts it, this tells us
+    # it happened so someone can ask why.
+    trigger.on-out-of-sync: |
+      - when: app.status.sync.status == 'OutOfSync'
+        send: [app-out-of-sync]
+
+redis-ha:
+  enabled: true
+
+dex:
+  enabled: false # Keycloak is the IdP; Dex would be a second one to secure

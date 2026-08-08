@@ -1,0 +1,91 @@
+---
+# Baseline every host gets, regardless of role.
+
+- name: Verify we are on a supported OS
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family == "RedHat"
+      - ansible_distribution_major_version | int >= 9
+    fail_msg: "This baseline targets RHEL/Rocky 9+. Found {{ ansible_distribution }} {{ ansible_distribution_version }}."
+
+- name: Install baseline packages
+  ansible.builtin.dnf:
+    name: "{{ baseline_packages }}"
+    state: present
+
+- name: Configure DNS resolver
+  ansible.builtin.template:
+    src: resolv.conf.j2
+    dest: /etc/resolv.conf
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+
+# Time sync is a security control, not a convenience: log correlation, TOTP,
+# certificate validity and Kerberos all break with drift.
+- name: Configure chrony
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: /etc/chrony.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "chronyd -f %s -Q"
+  notify: Restart chronyd
+
+- name: Ensure chronyd is running
+  ansible.builtin.systemd:
+    name: chronyd
+    state: started
+    enabled: true
+
+- name: Verify time is actually synchronised
+  ansible.builtin.command: chronyc tracking
+  register: chrony_tracking
+  changed_when: false
+  failed_when: "'Not synchronised' in chrony_tracking.stdout"
+
+- name: Configure the outbound proxy (no direct internet egress)
+  ansible.builtin.template:
+    src: profile-proxy.sh.j2
+    dest: /etc/profile.d/proxy.sh
+    owner: root
+    group: root
+    mode: "0644"
+  when: forward_proxy is defined
+
+- name: Set journald limits so logs cannot fill the disk
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/10-limits.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible — roles/baseline
+      [Journal]
+      Storage=persistent
+      SystemMaxUse={{ journald_max_use }}
+      SystemKeepFree=1G
+      MaxRetentionSec={{ journald_retention }}
+      ForwardToSyslog=yes
+  notify: Restart journald
+
+- name: Central identity via SSSD (no local user accounts)
+  ansible.builtin.template:
+    src: sssd.conf.j2
+    dest: /etc/sssd/sssd.conf
+    owner: root
+    group: root
+    mode: "0600" # sssd refuses to start if this is group/world readable
+  notify: Restart sssd
+  when: sssd_enabled | bool
+
+- name: Configure sudo rules from central policy
+  ansible.builtin.template:
+    src: sudoers-central.j2
+    dest: /etc/sudoers.d/10-central
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "visudo -cf %s" # a bad sudoers file locks everyone out

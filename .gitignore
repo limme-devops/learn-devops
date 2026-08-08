@@ -1,0 +1,62 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+.terraformrc
+terraform.rc
+# NOTE: terraform.tfvars IS committed here because it holds non-secret env values.
+# Secrets come from Vault. If you ever put a secret in tfvars, you have made a mistake.
+*.auto.tfvars
+
+# Ansible
+*.retry
+.vault_pass
+inventories/**/vault_pass*
+fact_cache/
+
+# Secrets — belt and braces; gitleaks is the real gate
+*.pem
+*.key
+*.p12
+*.pfx
+.env
+.env.*
+!.env.example
+kubeconfig
+*.kubeconfig
+vault-init.json
+unseal-keys*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build / tooling
+node_modules/
+dist/
+build/
+*.log
+.DS_Store
+.idea/
+.vscode/
+!.vscode/extensions.json
+
+# Local lab
+local-lab/.state/
+
+# Agent/editor local state — never pushed
+.claude/
+.claude/**
+CLAUDE.local.md

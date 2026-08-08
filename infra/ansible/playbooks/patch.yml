@@ -1,0 +1,77 @@
+---
+# Monthly patching. Rolls through the fleet one node at a time with the same
+# drain/health/soak discipline as a deployment, because a patch IS a deployment.
+
+- name: Patch Linux fleet
+  hosts: "{{ target | default('linux') }}"
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+
+  pre_tasks:
+    - name: Confirm we are inside the patch window
+      ansible.builtin.assert:
+        that:
+          - ansible_date_time.weekday_number | int == patch_window_weekday | default(6) | int
+            or (emergency_patch | default(false) | bool)
+        fail_msg: >-
+          Outside the patch window. Set emergency_patch=true with a change
+          ticket for out-of-band CVE remediation.
+      when: environment_name == 'prod'
+
+    - name: Take the node out of service
+      ansible.builtin.include_tasks: tasks/drain-node.yml
+      when: inventory_hostname in groups.get('app_servers', [])
+
+  tasks:
+    - name: Apply security updates only
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        security: "{{ security_updates_only | default(true) }}"
+        update_cache: true
+      register: patch_result
+
+    - name: Report what changed
+      ansible.builtin.debug:
+        var: patch_result.results
+
+    - name: Check whether a reboot is required
+      ansible.builtin.command: needs-restarting -r
+      register: needs_reboot
+      failed_when: false
+      changed_when: false
+
+    - name: Reboot if required and permitted
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+        post_reboot_delay: 30
+      when:
+        - needs_reboot.rc == 1
+        - patch_reboot_allowed | bool
+
+    - name: Warn when a reboot is pending but not permitted
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} needs a reboot. Schedule it as a separate
+          change — this playbook will not reboot prod unattended.
+      when:
+        - needs_reboot.rc == 1
+        - not (patch_reboot_allowed | bool)
+
+  post_tasks:
+    - name: Verify services are healthy after patching
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      register: svc
+      failed_when: svc.status.ActiveState != "active"
+      loop: "{{ critical_services | default(['sshd', 'auditd', 'chronyd']) }}"
+
+    - name: Return the node to service
+      ansible.builtin.include_tasks: tasks/undrain-node.yml
+      when: inventory_hostname in groups.get('app_servers', [])
+
+    - name: Soak before moving to the next node
+      ansible.builtin.pause:
+        seconds: "{{ deploy_soak_seconds | default(60) }}"
+      when: not ansible_check_mode

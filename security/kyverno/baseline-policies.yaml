@@ -1,0 +1,269 @@
+---
+# Admission control. These are the last line of defence: they stop a bad
+# workload even if CI was bypassed, a policy was forgotten, or someone applied
+# YAML by hand. Every policy runs in Audit mode first, then flips to Enforce
+# once the existing estate is clean.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-signed-images
+  annotations:
+    policies.kyverno.io/severity: critical
+    policies.kyverno.io/description: >-
+      Only images signed by our CI may run. This is the control that stops a
+      registry compromise from becoming a cluster compromise.
+spec:
+  validationFailureAction: Enforce
+  background: false
+  webhookTimeoutSeconds: 30
+  failurePolicy: Fail        # if Kyverno is down, admission FAILS CLOSED
+  rules:
+    - name: verify-cosign-signature
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: ["app-*", "data-*"]
+      verifyImages:
+        - imageReferences:
+            - "harbor.bank.internal/app/*"
+          mutateDigest: true      # rewrite tag -> digest, so what is admitted is immutable
+          verifyDigest: true
+          required: true
+          attestors:
+            - count: 1
+              entries:
+                - keyless:
+                    subject: "https://gitlab.bank.internal/apps/*"
+                    issuer: "https://gitlab.bank.internal"
+                    rekor:
+                      url: https://rekor.bank.internal
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-image-registries
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: only-internal-registry
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      exclude:
+        any:
+          - resources:
+              namespaces: [kube-system]
+      validate:
+        message: >-
+          Images must come from harbor.bank.internal. Public registries are
+          mirrored internally — pulling directly from the internet is both a
+          supply-chain risk and an availability risk.
+        pattern:
+          spec:
+            =(ephemeralContainers):
+              - image: "harbor.bank.internal/*"
+            =(initContainers):
+              - image: "harbor.bank.internal/*"
+            containers:
+              - image: "harbor.bank.internal/*"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-image-digest
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: ["app-*"]
+      validate:
+        message: >-
+          Production images must be pinned by digest (image@sha256:...).
+          A tag is mutable: what you tested is not necessarily what runs.
+        pattern:
+          spec:
+            containers:
+              - image: "*@sha256:*"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-resources-and-probes
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-requests-and-memory-limit
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: ["app-*", "data-*"]
+      validate:
+        message: >-
+          Every container needs CPU/memory requests and a memory limit.
+          Without requests the scheduler cannot place it safely; without a
+          memory limit one leak takes down the node.
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  requests:
+                    cpu: "?*"
+                    memory: "?*"
+                  limits:
+                    memory: "?*"
+
+    - name: require-liveness-and-readiness
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: ["app-*"]
+      exclude:
+        any:
+          - resources:
+              selector:
+                matchLabels:
+                  app.kubernetes.io/component: migration   # Jobs are not long-lived
+      validate:
+        message: >-
+          Every container needs distinct liveness and readiness probes.
+          Same endpoint for both means a slow dependency triggers restarts
+          instead of removing the pod from load balancing.
+        pattern:
+          spec:
+            containers:
+              - livenessProbe:
+                  "?*": "?*"
+                readinessProbe:
+                  "?*": "?*"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-pod-security
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: non-root-readonly-nocaps
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: ["app-*"]
+      validate:
+        message: >-
+          Containers must run as non-root with a read-only root filesystem,
+          all capabilities dropped, and no privilege escalation.
+        pattern:
+          spec:
+            securityContext:
+              runAsNonRoot: true
+            containers:
+              - securityContext:
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities:
+                    drop: ["ALL"]
+
+    - name: disallow-host-namespaces-and-paths
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      exclude:
+        any:
+          - resources:
+              namespaces: [kube-system, monitoring, falco]   # node agents legitimately need these
+      validate:
+        message: "hostNetwork, hostPID, hostIPC and hostPath break container isolation."
+        pattern:
+          spec:
+            =(hostNetwork): "false"
+            =(hostPID): "false"
+            =(hostIPC): "false"
+            =(volumes):
+              - X(hostPath): "null"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-ownership-labels
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-owner-costcenter-dataclass
+      match:
+        any:
+          - resources:
+              kinds: [Deployment, StatefulSet, Rollout, CronJob]
+              namespaces: ["app-*", "data-*"]
+      validate:
+        message: >-
+          owner, cost-center and data-class labels are mandatory. They drive
+          alert routing, chargeback, and data-handling rules — an unlabelled
+          workload is one nobody can be paged about.
+        pattern:
+          metadata:
+            labels:
+              owner: "?*"
+              cost-center: "?*"
+              data-class: "restricted | confidential | internal | public"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-default-serviceaccount
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: no-default-sa
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: ["app-*", "data-*"]
+      validate:
+        message: >-
+          Pods must use a dedicated ServiceAccount. The default SA is shared by
+          every workload in the namespace, so its permissions are everyone's.
+        pattern:
+          spec:
+            serviceAccountName: "!default"
+---
+# Generate a default-deny NetworkPolicy into every new app namespace, so a
+# namespace is never briefly wide open between creation and policy sync.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: generate-default-deny-netpol
+spec:
+  rules:
+    - name: default-deny
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+              names: ["app-*"]
+      generate:
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: default-deny-all
+        namespace: "{{request.object.metadata.name}}"
+        synchronize: true
+        data:
+          spec:
+            podSelector: {}
+            policyTypes: [Ingress, Egress]

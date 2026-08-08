@@ -1,0 +1,102 @@
+---
+# AppProjects are the guardrails. Without them, any Application in the argocd
+# namespace can deploy anything, anywhere — which makes Argo itself the softest
+# target in the cluster.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform-prod
+  namespace: argocd
+spec:
+  description: Platform components for the production cluster
+
+  sourceRepos:
+    - https://gitlab.bank.internal/platform/gitops.git
+    - https://harbor.bank.internal/chartrepo/platform   # internal mirror only
+
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+
+  # Platform genuinely needs cluster-scoped resources — but enumerate them.
+  clusterResourceWhitelist:
+    - { group: "", kind: Namespace }
+    - { group: rbac.authorization.k8s.io, kind: ClusterRole }
+    - { group: rbac.authorization.k8s.io, kind: ClusterRoleBinding }
+    - { group: apiextensions.k8s.io, kind: CustomResourceDefinition }
+    - { group: storage.k8s.io, kind: StorageClass }
+    - { group: admissionregistration.k8s.io, kind: ValidatingWebhookConfiguration }
+    - { group: admissionregistration.k8s.io, kind: MutatingWebhookConfiguration }
+    - { group: kyverno.io, kind: ClusterPolicy }
+    - { group: cert-manager.io, kind: ClusterIssuer }
+
+  # Even platform may not create these.
+  namespaceResourceBlacklist:
+    - { group: "", kind: ResourceQuota }   # quotas are set by governance, not by apps
+
+  roles:
+    - name: readonly
+      description: Everyone can look
+      policies:
+        - p, proj:platform-prod:readonly, applications, get, platform-prod/*, allow
+      groups:
+        - bank:engineering
+    - name: operator
+      description: Platform team may sync
+      policies:
+        - p, proj:platform-prod:operator, applications, sync, platform-prod/*, allow
+        - p, proj:platform-prod:operator, applications, action/*, platform-prod/*, allow
+      groups:
+        - bank:platform-engineering
+
+  syncWindows:
+    # Block automated prod syncs during month-end close. Emergency changes use
+    # a manual sync with a named approver (docs/10-deployment-strategies.md §7).
+    - kind: deny
+      schedule: "0 0 28-31 * *"
+      duration: 24h
+      applications: ["*"]
+      manualSync: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: business-prod
+  namespace: argocd
+spec:
+  description: Business applications for the production cluster
+
+  sourceRepos:
+    - https://gitlab.bank.internal/platform/gitops.git
+
+  # Business apps deploy ONLY into their own namespaces.
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: app-*
+
+  # No cluster-scoped resources at all. An application that needs a ClusterRole
+  # needs a conversation with the platform team, not a merge.
+  clusterResourceWhitelist: []
+
+  namespaceResourceBlacklist:
+    - { group: "", kind: ResourceQuota }
+    - { group: "", kind: LimitRange }
+    - { group: networking.k8s.io, kind: NetworkPolicy }  # baseline policies are platform-owned
+    - { group: rbac.authorization.k8s.io, kind: Role }
+    - { group: rbac.authorization.k8s.io, kind: RoleBinding }
+
+  roles:
+    - name: developer
+      description: Devs can view and restart, but not sync prod
+      policies:
+        - p, proj:business-prod:developer, applications, get, business-prod/*, allow
+        - p, proj:business-prod:developer, applications, action/apps/Deployment/restart, business-prod/*, allow
+        - p, proj:business-prod:developer, applications, sync, business-prod/*, deny
+      groups:
+        - bank:developers
+    - name: release-manager
+      policies:
+        - p, proj:business-prod:release-manager, applications, sync, business-prod/*, allow
+        - p, proj:business-prod:release-manager, applications, override, business-prod/*, allow
+      groups:
+        - bank:release-managers

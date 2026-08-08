@@ -1,0 +1,36 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - serviceaccount.yaml
+  - rollout.yaml
+  - service.yaml
+  - networkpolicy.yaml
+  - externalsecret.yaml
+  - hpa.yaml
+  - pdb.yaml
+  - servicemonitor.yaml
+  - prometheusrule.yaml
+  - analysistemplate.yaml
+  - migration-job.yaml
+
+commonLabels:
+  app.kubernetes.io/name: payment-service
+  app.kubernetes.io/part-of: payments
+  # Required by the Kyverno require-labels policy — these drive cost
+  # allocation, ownership routing and data-handling rules.
+  owner: payments-team
+  cost-center: CC-2010
+  data-class: restricted
+
+commonAnnotations:
+  bank.internal/runbook: https://wiki.bank.internal/runbooks/payment-service
+  bank.internal/slo: https://gitlab.bank.internal/apps/payment-service/-/blob/main/docs/slo.md
+  bank.internal/repo: https://gitlab.bank.internal/apps/payment-service
+
+# Overlays set the image DIGEST. The base deliberately has no tag: forgetting to
+# pin in an overlay should break the build, not silently deploy something.
+images:
+  - name: payment-service
+    newName: harbor.bank.internal/app/payment-service

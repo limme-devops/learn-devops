@@ -1,0 +1,18 @@
+# Managed by Ansible — roles/baseline
+# Validated with visudo before install. Do not edit on the host.
+
+Defaults    log_input, log_output
+Defaults    iolog_dir=/var/log/sudo-io/%{user}
+Defaults    requiretty
+Defaults    passwd_timeout=1
+Defaults    timestamp_timeout=5
+Defaults    lecture=never
+Defaults    syslog=authpriv
+
+{% for group in sudo_admin_groups %}
+%{{ group }} ALL=(ALL) ALL
+{% endfor %}
+
+# The automation account needs unattended sudo, but every command it runs is
+# recorded by the io-log settings above and shipped to the SIEM.
+ansible ALL=(ALL) NOPASSWD: ALL

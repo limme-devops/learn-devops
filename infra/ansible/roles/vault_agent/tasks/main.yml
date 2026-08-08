@@ -1,0 +1,111 @@
+---
+# vault-agent: authenticates with AppRole, renders secrets to tmpfs, and signals
+# the application when they rotate. This is what removes static credentials from
+# VM hosts entirely (docs/03-security-baseline.md §2).
+
+- name: Install the Vault binary from the internal mirror
+  ansible.builtin.get_url:
+    url: "{{ artifact_repo }}/hashicorp/vault/{{ vault_version }}/vault_{{ vault_version }}_linux_amd64.zip"
+    dest: /tmp/vault.zip
+    checksum: "sha256:{{ vault_sha256 }}" # never install an unverified binary
+    mode: "0600"
+
+- name: Unpack the Vault binary
+  ansible.builtin.unarchive:
+    src: /tmp/vault.zip
+    dest: /usr/local/bin
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+    creates: /usr/local/bin/vault
+
+- name: Create the vault-agent user
+  ansible.builtin.user:
+    name: vault-agent
+    system: true
+    shell: /sbin/nologin
+    home: /etc/vault-agent
+    create_home: false
+
+- name: Create configuration directory
+  ansible.builtin.file:
+    path: /etc/vault-agent
+    state: directory
+    owner: vault-agent
+    group: vault-agent
+    mode: "0750"
+
+# tmpfs: secrets live in RAM. A stolen disk yields nothing; a reboot forgets.
+- name: Mount the secrets tmpfs
+  ansible.posix.mount:
+    path: /run/secrets
+    src: tmpfs
+    fstype: tmpfs
+    opts: "rw,nosuid,nodev,noexec,relatime,size=8m,mode=0750,uid=vault-agent,gid={{ app_group | default('root') }}"
+    state: mounted
+
+- name: Install the AppRole role_id (not a secret on its own)
+  ansible.builtin.copy:
+    content: "{{ vault_role_id }}"
+    dest: /etc/vault-agent/role_id
+    owner: vault-agent
+    group: vault-agent
+    mode: "0400"
+
+# The secret_id IS a credential. It is response-wrapped and single-use: delivered
+# by the provisioning pipeline, consumed once, then worthless to an attacker.
+- name: Install the response-wrapped secret_id
+  ansible.builtin.copy:
+    content: "{{ vault_secret_id_wrapped }}"
+    dest: /etc/vault-agent/secret_id
+    owner: vault-agent
+    group: vault-agent
+    mode: "0400"
+  no_log: true
+  notify: Restart vault-agent
+
+- name: Render the vault-agent configuration
+  ansible.builtin.template:
+    src: vault-agent.hcl.j2
+    dest: /etc/vault-agent/agent.hcl
+    owner: vault-agent
+    group: vault-agent
+    mode: "0640"
+  notify: Restart vault-agent
+
+- name: Install secret templates
+  ansible.builtin.template:
+    src: "{{ item.template }}"
+    dest: "/etc/vault-agent/{{ item.name }}.ctmpl"
+    owner: vault-agent
+    group: vault-agent
+    mode: "0640"
+  loop: "{{ vault_agent_templates }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Restart vault-agent
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: vault-agent.service.j2
+    dest: /etc/systemd/system/vault-agent.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart vault-agent
+
+- name: Start vault-agent
+  ansible.builtin.systemd:
+    name: vault-agent
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Wait for the first secret render
+  ansible.builtin.wait_for:
+    path: "/run/secrets/{{ vault_agent_templates[0].name }}"
+    timeout: 60
+  when: vault_agent_templates | length > 0

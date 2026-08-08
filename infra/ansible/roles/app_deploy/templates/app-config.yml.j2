@@ -1,0 +1,73 @@
+# Managed by Ansible — roles/app_deploy
+# NON-SECRET configuration only. Credentials arrive via /run/secrets (tmpfs).
+server:
+  port: {{ app_port }}
+  shutdown: graceful
+  # Must exceed the LB drain window so in-flight requests finish.
+  gracePeriodSeconds: 30
+
+app:
+  name: {{ app_name }}
+  version: "{{ app_deploy_version }}"
+  environment: {{ environment_name }}
+
+logging:
+  level: {{ app_log_level }}
+  format: json
+  # Fields the logger must redact before writing. Masking happens at the
+  # source, not in the ingest pipeline (docs/06-observability.md §2).
+  redact:
+    - password
+    - authorization
+    - card_number
+    - pan
+    - cvv
+    - national_id
+    - access_token
+    - refresh_token
+
+observability:
+  metricsPath: /metrics
+  tracing:
+    enabled: true
+    endpoint: "{{ otel_endpoint }}"
+    sampleRatio: {{ 0.1 if environment_name == 'prod' else 1.0 }}
+
+security:
+  oidc:
+    issuer: "{{ keycloak_url }}/realms/{{ keycloak_realm | default('bank') }}"
+    audience: "{{ app_name }}"
+    jwksCacheSeconds: 300
+    # Explicitly pin accepted algorithms. 'none' must never be reachable.
+    allowedAlgorithms: [RS256, ES256]
+  tls:
+    minVersion: "1.2"
+  headers:
+    hsts: "max-age=31536000; includeSubDomains"
+    contentSecurityPolicy: "default-src 'self'"
+    frameOptions: DENY
+    contentTypeOptions: nosniff
+
+resilience:
+  # Every outbound dependency gets a timeout, a retry budget and a breaker
+  # (docs/08-microservices.md §4).
+  database:
+    connectTimeoutMs: 3000
+    queryTimeoutMs: 5000
+    poolSize: 20
+  http:
+    connectTimeoutMs: 2000
+    readTimeoutMs: 5000
+    maxRetries: 2
+    circuitBreaker:
+      failureRateThreshold: 50
+      slidingWindowSize: 20
+      waitDurationInOpenStateMs: 30000
+
+database:
+  host: "{{ db_host | default('db.' ~ dns_domain | default('bank.internal')) }}"
+  port: 5432
+  name: "{{ db_name | default(app_name) }}"
+  sslMode: verify-full
+  sslRootCert: /etc/pki/tls/certs/bank-internal-ca.pem
+  # username/password come from the environment file — see vault_agent role.

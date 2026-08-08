@@ -1,0 +1,64 @@
+# Managed by Ansible — roles/observability_agents
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: {{ loki_endpoint }}
+    tls_config:
+      ca_file: /etc/pki/tls/certs/bank-internal-ca.pem
+    backoff_config:
+      min_period: 500ms
+      max_period: 5m
+      max_retries: 10
+
+scrape_configs:
+  # --- systemd journal: everything the host and its units emit ---
+  - job_name: journal
+    journal:
+      max_age: 12h
+      labels:
+        job: systemd-journal
+        host: {{ inventory_hostname_short }}
+        environment: {{ environment_name }}
+    relabel_configs:
+      - source_labels: ['__journal__systemd_unit']
+        target_label: unit
+      - source_labels: ['__journal_syslog_identifier']
+        target_label: syslog_identifier
+    pipeline_stages:
+      # Application logs are JSON; pull trace_id out so Grafana can jump
+      # straight from a log line to the trace (docs/06-observability.md §2).
+      - match:
+          selector: '{syslog_identifier="{{ app_name | default("payment-service") }}"}'
+          stages:
+            - json:
+                expressions:
+                  level: level
+                  trace_id: trace_id
+                  request_id: request_id
+            - labels:
+                level:
+                trace_id:
+      # Last-resort redaction. Masking belongs in the application logger; this
+      # is here so an application bug does not become a compliance incident.
+      - replace:
+          expression: '(?i)("(?:password|token|secret|pan|cvv|access_token)"\s*:\s*")([^"]+)'
+          replace: '${1}[REDACTED]'
+      - replace:
+          expression: '\b(\d{4})[ -]?\d{4}[ -]?\d{4}[ -]?(\d{4})\b'
+          replace: '${1}********${2}'
+
+  # --- audit log: shipped to Loki for search AND to the SIEM for retention ---
+  - job_name: auditd
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: auditd
+          host: {{ inventory_hostname_short }}
+          environment: {{ environment_name }}
+          retention: long
+          __path__: /var/log/audit/audit.log

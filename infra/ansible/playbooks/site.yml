@@ -1,0 +1,32 @@
+---
+# Full converge. Safe to run repeatedly — every role is idempotent.
+#   make ansible-check ENV=prod   # always first
+#   make ansible-apply ENV=prod
+
+- name: Baseline all Linux hosts
+  hosts: linux
+  become: true
+  gather_facts: true
+  roles:
+    - role: baseline
+      tags: [baseline]
+    - role: hardening_cis
+      tags: [hardening, security]
+    - role: vault_agent
+      tags: [vault, secrets]
+    - role: observability_agents
+      tags: [observability]
+
+- name: Configure load balancers
+  hosts: loadbalancers
+  become: true
+  roles:
+    - role: haproxy
+      tags: [haproxy, lb]
+
+- name: Configure application servers
+  hosts: app_servers
+  become: true
+  roles:
+    - role: app_deploy
+      tags: [app]

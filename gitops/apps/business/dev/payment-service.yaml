@@ -1,0 +1,33 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: payment-service-dev
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: business-dev
+  source:
+    repoURL: https://gitlab.bank.internal/platform/gitops.git
+    targetRevision: main
+    path: business/payment-service/overlays/dev
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: app-payment
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: true      # dev DOES prune — keeping it clean matters more than safety here
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+  ignoreDifferences:
+    - group: argoproj.io
+      kind: Rollout
+      jsonPointers: [/spec/replicas]
+    - group: ""
+      kind: Secret
+      name: payment-service-secrets
+      jsonPointers: [/data]

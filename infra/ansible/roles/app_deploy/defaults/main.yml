@@ -1,0 +1,26 @@
+---
+app_name: payment-service
+app_image: "app/payment-service"
+app_user: "{{ app_name }}"
+app_group: "{{ app_name }}"
+app_install_dir: "/opt/{{ app_name }}"
+app_data_dir: "/var/lib/{{ app_name }}"
+app_port: 8080
+
+# Never defaulted to a value — the playbook asserts it is supplied explicitly.
+# app_deploy_version: <required>
+
+verify_image_signature: true
+cosign_identity_regexp: "https://gitlab.bank.internal/.*"
+cosign_oidc_issuer: "https://gitlab.bank.internal"
+
+image_retention_hours: 168 # keep a week of images so rollback is instant
+
+# Resource limits. A VM without cgroup limits is a VM where one runaway process
+# takes down everything else on the box.
+app_memory_limit: "2G"
+app_cpu_quota: "200%"
+app_task_limit: 512
+
+app_java_opts: ""
+app_log_level: INFO

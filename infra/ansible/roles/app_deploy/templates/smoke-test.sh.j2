@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Managed by Ansible — roles/app_deploy
+# Node-local smoke test. Runs AFTER the deploy and BEFORE the node returns to
+# the load balancer. Exit non-zero and the rollout halts.
+set -euo pipefail
+
+BASE="http://127.0.0.1:{{ app_port }}"
+EXPECTED_VERSION="{{ app_deploy_version }}"
+fail() { echo "SMOKE FAIL: $*" >&2; exit 1; }
+
+echo "--> liveness"
+curl -sf --max-time 5 "${BASE}/healthz" >/dev/null || fail "healthz not responding"
+
+echo "--> readiness (dependencies reachable)"
+curl -sf --max-time 10 "${BASE}/ready" >/dev/null || fail "not ready — check DB/Vault/Keycloak connectivity"
+
+echo "--> version matches what we deployed"
+ACTUAL=$(curl -sf --max-time 5 "${BASE}/version" | jq -r '.version')
+[[ "${ACTUAL}" == "${EXPECTED_VERSION}" ]] || fail "running ${ACTUAL}, expected ${EXPECTED_VERSION}"
+
+echo "--> metrics endpoint is scrapeable"
+curl -sf --max-time 5 "${BASE}/metrics" | grep -q '^http_requests_total' \
+  || fail "metrics missing http_requests_total — Prometheus would scrape nothing"
+
+echo "--> unauthenticated request is rejected"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "${BASE}/api/v1/payments")
+[[ "${CODE}" == "401" || "${CODE}" == "403" ]] \
+  || fail "unauthenticated request returned ${CODE}, expected 401/403"
+
+echo "--> no secrets leaked into the process environment dump"
+if curl -sf --max-time 5 "${BASE}/debug/env" 2>/dev/null | grep -qiE 'password|secret|token'; then
+  fail "debug endpoint is exposing secrets — this must not be reachable in {{ environment_name }}"
+fi
+
+echo "SMOKE PASS: {{ app_name }} ${EXPECTED_VERSION} on $(hostname -s)"

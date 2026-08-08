@@ -1,0 +1,89 @@
+# Managed by Ansible — roles/app_deploy
+[Unit]
+Description={{ app_name }} ({{ app_deploy_version }})
+Documentation=https://gitlab.bank.internal/apps/{{ app_name }}
+After=network-online.target vault-agent.service
+Wants=network-online.target
+Requires=vault-agent.service
+
+[Service]
+Type=notify
+NotifyAccess=all
+User={{ app_user }}
+Group={{ app_group }}
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=120
+TimeoutStopSec=60
+
+# --- sandboxing: the same posture as the Kubernetes securityContext --------
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+ReadWritePaths={{ app_data_dir }} /var/log/{{ app_name }}
+
+# --- resource limits -------------------------------------------------------
+MemoryMax={{ app_memory_limit }}
+CPUQuota={{ app_cpu_quota }}
+TasksMax={{ app_task_limit }}
+LimitNOFILE=65535
+OOMPolicy=stop
+
+# --- secrets: tmpfs only, never disk ---------------------------------------
+EnvironmentFile=/run/secrets/{{ app_name }}.env
+Environment=APP_CONFIG={{ app_install_dir }}/config/application.yml
+Environment=APP_VERSION={{ app_deploy_version }}
+Environment=LOG_LEVEL={{ app_log_level }}
+Environment=OTEL_EXPORTER_OTLP_ENDPOINT={{ otel_endpoint }}
+Environment=OTEL_SERVICE_NAME={{ app_name }}
+Environment=OTEL_RESOURCE_ATTRIBUTES=deployment.environment={{ environment_name }},service.version={{ app_deploy_version }}
+
+ExecStartPre=/usr/bin/podman rm -f {{ app_name }}
+ExecStart=/usr/bin/podman run \
+    --rm \
+    --name {{ app_name }} \
+    --sdnotify=conmon \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --user 10001:10001 \
+    --publish 127.0.0.1:{{ app_port }}:{{ app_port }} \
+    --env-file /run/secrets/{{ app_name }}.env \
+    --volume {{ app_install_dir }}/config:/config:ro,Z \
+    --volume {{ app_data_dir }}:/data:rw,Z \
+    --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+    --memory {{ app_memory_limit }} \
+    --health-cmd "curl -sf http://localhost:{{ app_port }}/healthz || exit 1" \
+    --health-interval 30s \
+    --health-retries 3 \
+    {{ container_registry }}/{{ app_image }}:{{ app_deploy_version }}
+
+ExecStop=/usr/bin/podman stop --time 30 {{ app_name }}
+ExecReload=/usr/bin/podman kill --signal HUP {{ app_name }}
+
+# --- logging ---------------------------------------------------------------
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier={{ app_name }}
+
+[Install]
+WantedBy=multi-user.target

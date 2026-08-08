@@ -1,0 +1,44 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: payment-service
+  annotations:
+    cert-manager.io/cluster-issuer: vault-internal-ca
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "2"
+    # ModSecurity WAF with the OWASP core rule set at the edge.
+    nginx.ingress.kubernetes.io/enable-modsecurity: "true"
+    nginx.ingress.kubernetes.io/enable-owasp-core-rules: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains; preload";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_clear_headers "Server";
+      # Correlation id generated at the edge if the client did not supply one.
+      set $req_id $request_id;
+      proxy_set_header X-Request-ID $req_id;
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - payments.bank.internal
+      secretName: payment-service-tls
+  rules:
+    - host: payments.bank.internal
+      http:
+        paths:
+          - path: /api/v1/payments
+            pathType: Prefix
+            backend:
+              service:
+                # Argo Rollouts rewrites this between stable and canary as the
+                # rollout progresses. Do not point it at the root service.
+                name: payment-service-stable
+                port:
+                  number: 8080

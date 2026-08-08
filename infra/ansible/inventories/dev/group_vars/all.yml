@@ -1,0 +1,47 @@
+---
+environment_name: dev
+environment_tier: nonproduction
+
+ansible_user: ansible
+ansible_python_interpreter: /usr/bin/python3.11
+ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
+
+vault_addr: "https://vault.dev.bank.internal:8200"
+vault_namespace: "dev"
+keycloak_url: "https://sso-dev.bank.internal"
+ntp_servers: [ntp1.bank.internal]
+dns_servers: [10.99.1.10]
+search_domains: [dev.bank.internal, bank.internal]
+
+package_repo_url: "https://satellite.bank.internal/pulp/content/dev"
+container_registry: "harbor.bank.internal"
+artifact_repo: "https://nexus.bank.internal/repository/snapshots"
+forward_proxy: "http://proxy.bank.internal:3128"
+no_proxy_hosts: ".bank.internal,10.0.0.0/8,127.0.0.1,localhost"
+
+prometheus_scrape_cidr: "10.10.64.0/20"
+loki_endpoint: "https://loki.dev.bank.internal/loki/api/v1/push"
+otel_endpoint: "https://otel.dev.bank.internal:4317"
+
+# Dev runs level1 so developers aren't fighting the baseline, but SELinux stays
+# enforcing — discovering SELinux problems in prod is not a plan.
+cis_profile: level1
+selinux_state: enforcing
+firewall_default_zone: drop
+ssh_permit_root_login: "no"
+ssh_password_authentication: "no"
+ssh_allow_groups: "ansible sysadmins developers"
+auditd_max_log_file_action: rotate
+aide_check_schedule: "0 3 * * 0"
+
+patch_window_day: "Tue"
+patch_reboot_allowed: true
+
+backup_tier: 3
+backup_target: "s3://backups-dev"
+backup_retention_days: 7
+
+app_health_url: "http://127.0.0.1:8080/healthz"
+app_ready_url: "http://127.0.0.1:8080/ready"
+deploy_soak_seconds: 5
+deploy_serial: 1

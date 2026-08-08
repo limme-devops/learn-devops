@@ -1,0 +1,36 @@
+# Managed by Ansible — roles/hardening_cis
+# Logs leave the host as they are written. A host that is compromised must not
+# be able to erase the evidence of the compromise.
+
+module(load="imfile" PollingInterval="10")
+
+input(type="imfile"
+      File="/var/log/audit/audit.log"
+      Tag="auditd"
+      Severity="info"
+      Facility="local6")
+
+# TLS to the SIEM. Plaintext syslog across a data centre is still plaintext.
+global(
+  DefaultNetstreamDriver="gtls"
+  DefaultNetstreamDriverCAFile="/etc/pki/tls/certs/bank-internal-ca.pem"
+  DefaultNetstreamDriverCertFile="/etc/pki/tls/certs/{{ inventory_hostname_short }}.pem"
+  DefaultNetstreamDriverKeyFile="/etc/pki/tls/private/{{ inventory_hostname_short }}.key"
+)
+
+action(
+  type="omfwd"
+  Target="{{ siem_host }}"
+  Port="{{ siem_port }}"
+  Protocol="tcp"
+  StreamDriver="gtls"
+  StreamDriverMode="1"
+  StreamDriverAuthMode="x509/name"
+  StreamDriverPermittedPeers="{{ siem_host }}"
+  # Disk-assisted queue so a SIEM outage buffers rather than drops.
+  queue.type="LinkedList"
+  queue.filename="siem_fwd"
+  queue.maxdiskspace="2g"
+  queue.saveonshutdown="on"
+  action.resumeRetryCount="-1"
+)

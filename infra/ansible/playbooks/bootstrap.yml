@@ -1,0 +1,69 @@
+---
+# First contact with a freshly cloned VM. Run once, with the short-lived
+# bootstrap key that Terraform injected. Its final act is to remove that key —
+# after this, access is only via Vault-signed SSH certificates.
+
+- name: Bootstrap a new host
+  hosts: "{{ target | default('linux') }}"
+  become: true
+  gather_facts: true
+  vars:
+    ansible_ssh_private_key_file: "{{ bootstrap_key_path | default('~/.ssh/bootstrap') }}"
+
+  tasks:
+    - name: Set hostname
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname_short }}"
+
+    - name: Configure resolver
+      ansible.builtin.template:
+        src: ../roles/baseline/templates/resolv.conf.j2
+        dest: /etc/resolv.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Create the ansible service account
+      ansible.builtin.user:
+        name: ansible
+        shell: /bin/bash
+        system: false
+        create_home: true
+        groups: wheel
+        append: true
+
+    - name: Install the Vault SSH CA trust anchor
+      ansible.builtin.copy:
+        content: "{{ lookup('community.hashi_vault.vault_read', 'ssh-client-signer/config/ca', url=vault_addr).data.public_key }}"
+        dest: /etc/ssh/trusted-user-ca-keys.pem
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart sshd
+
+    - name: Trust certificates signed by the Vault SSH CA
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^TrustedUserCAKeys'
+        line: "TrustedUserCAKeys /etc/ssh/trusted-user-ca-keys.pem"
+        validate: "sshd -t -f %s"
+      notify: Restart sshd
+
+    - name: Register host with the internal package mirror
+      ansible.builtin.command:
+        cmd: subscription-manager register --org={{ satellite_org }} --activationkey={{ satellite_activation_key }}
+        creates: /etc/pki/consumer/cert.pem
+      no_log: true # activation key is a credential
+
+    - name: Remove the bootstrap key — from here on, certs only
+      ansible.posix.authorized_key:
+        user: ansible
+        key: "{{ bootstrap_public_key }}"
+        state: absent
+      when: remove_bootstrap_key | default(true) | bool
+
+  handlers:
+    - name: Restart sshd
+      ansible.builtin.systemd:
+        name: sshd
+        state: restarted

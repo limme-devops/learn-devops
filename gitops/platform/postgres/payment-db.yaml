@@ -1,0 +1,148 @@
+---
+# PostgreSQL via CloudNativePG. The operator owns failover, WAL archiving and
+# PITR — all things that are painful and error-prone to hand-roll on a
+# StatefulSet (docs/04-platform-services.md §2).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: payment-db
+  namespace: data-postgres
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+  primaryUpdateStrategy: unsupervised
+  primaryUpdateMethod: switchover   # switchover, not restart: seconds of impact, not minutes
+
+  postgresql:
+    parameters:
+      max_connections: "200"
+      shared_buffers: "4GB"
+      effective_cache_size: "12GB"
+      work_mem: "16MB"
+      maintenance_work_mem: "512MB"
+      wal_level: logical
+      max_wal_size: "4GB"
+      checkpoint_completion_target: "0.9"
+      random_page_cost: "1.1"       # NVMe, not spinning rust
+
+      # --- security / audit ---
+      ssl: "on"
+      ssl_min_protocol_version: TLSv1.2
+      password_encryption: scram-sha-256
+      log_connections: "on"
+      log_disconnections: "on"
+      log_statement: "ddl"
+      log_min_duration_statement: "1000"    # log anything slower than 1s
+      log_line_prefix: "%m [%p] %q%u@%d/%a "
+      shared_preload_libraries: "pgaudit,pg_stat_statements"
+      "pgaudit.log": "write,ddl,role"       # the auditor's question: who changed what
+      "pgaudit.log_catalog": "off"
+
+      # Fail fast rather than pile up behind a lock.
+      lock_timeout: "10s"
+      idle_in_transaction_session_timeout: "60s"
+      statement_timeout: "30s"
+
+    pg_hba:
+      - hostssl payment payment_app 10.20.0.0/16 scram-sha-256
+      - hostssl all all 0.0.0.0/0 reject       # explicit reject, last rule
+
+  bootstrap:
+    initdb:
+      database: payment
+      owner: payment_app
+      encoding: UTF8
+      localeCollate: C
+      localeCType: C
+      dataChecksums: true                     # detects silent corruption
+      postInitApplicationSQL:
+        # The application role owns data, not structure. A compromised app pod
+        # cannot DROP TABLE.
+        - REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+        - CREATE SCHEMA IF NOT EXISTS payment AUTHORIZATION payment_app;
+        - CREATE EXTENSION IF NOT EXISTS pgaudit;
+        - CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+  storage:
+    size: 500Gi
+    storageClass: fast-retain
+  walStorage:
+    # WAL on its own volume: a full WAL disk stops the database dead, and it
+    # fills at a completely different rate from the data.
+    size: 100Gi
+    storageClass: fast-retain
+
+  # --- Backup: base backup daily + continuous WAL archiving = PITR ----------
+  backup:
+    retentionPolicy: "35d"
+    target: prefer-standby        # back up from a replica, not the primary
+    barmanObjectStore:
+      destinationPath: s3://backups-prod/postgres/payment-db
+      endpointURL: https://minio.data-minio.svc:9000
+      endpointCA:
+        name: minio-ca
+        key: ca.crt
+      s3Credentials:
+        accessKeyId:
+          name: minio-backup-creds
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: minio-backup-creds
+          key: SECRET_ACCESS_KEY
+      wal:
+        compression: gzip
+        maxParallel: 8
+      data:
+        compression: gzip
+        immediateCheckpoint: true
+        jobs: 4
+
+  monitoring:
+    enablePodMonitor: true
+
+  resources:
+    requests: { cpu: "2", memory: 8Gi }
+    limits: { memory: 16Gi }
+
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: required      # never two instances on one node
+    nodeSelector:
+      workload-class: data
+    tolerations:
+      - key: workload-class
+        operator: Equal
+        value: data
+        effect: NoSchedule
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: payment-db-daily
+  namespace: data-postgres
+spec:
+  schedule: "0 30 2 * * *"      # 6-field cron: 02:30 daily
+  backupOwnerReference: self
+  cluster:
+    name: payment-db
+  immediate: true
+---
+# Connection pooling. Without it, an HPA scaling to 20 pods x 20 connections
+# exhausts max_connections and takes the database down during a traffic spike.
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: payment-db-pooler
+  namespace: data-postgres
+spec:
+  cluster:
+    name: payment-db
+  instances: 3
+  type: rw
+  pgbouncer:
+    poolMode: transaction
+    parameters:
+      max_client_conn: "1000"
+      default_pool_size: "50"
+      server_idle_timeout: "300"
