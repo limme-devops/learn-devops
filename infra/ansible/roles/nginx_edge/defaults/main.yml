@@ -1,0 +1,67 @@
+---
+# roles/nginx_edge — hardened reverse proxy for the VM track.
+#
+# This role owns TLS termination and HTTP routing only. VIP failover and L4
+# health checking belong to roles/haproxy. Do not grow this role into a load
+# balancer; see docs/13-edge-gateway.md §1.
+
+nginx_edge_server_name: CHANGE_ME.bank.internal
+
+# Workers. `auto` = one per core. Only override with a measured reason.
+nginx_edge_worker_processes: auto
+nginx_edge_worker_connections: 16384
+nginx_edge_worker_rlimit_nofile: 65535
+
+# --- TLS --------------------------------------------------------------------
+# Certificate is rendered by vault-agent. The private key lands on tmpfs
+# (/run/secrets) and never touches disk — see roles/vault_agent.
+nginx_edge_tls_cert: /etc/nginx/tls/tls.crt
+nginx_edge_tls_key: /run/secrets/nginx-tls.key
+nginx_edge_tls_client_ca: /etc/nginx/tls/client-ca.crt
+
+# TLS 1.0/1.1 are a PCI-DSS failure. Do not add them back for a legacy client
+# without a dated, signed exception in the hardening exception register.
+nginx_edge_ssl_protocols: "TLSv1.2 TLSv1.3"
+nginx_edge_ssl_ciphers: >-
+  ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:
+  ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384
+nginx_edge_ssl_ciphers_flat: "{{ nginx_edge_ssl_ciphers | regex_replace('\\s+', '') }}"
+
+# Require a client certificate from the DMZ load balancer tier.
+nginx_edge_mtls_enabled: true
+
+# Resolver is REQUIRED for OCSP stapling to work. Without it stapling silently
+# does nothing and every client pays a round trip to the CA.
+nginx_edge_resolver: 10.0.0.10
+
+# --- Timeouts (every one is a DoS control) ----------------------------------
+nginx_edge_client_body_timeout: 10s
+nginx_edge_client_header_timeout: 10s
+nginx_edge_send_timeout: 10s
+# Ordering rule: downstream idle < this < upstream idle. Violating it produces
+# a low steady rate of 502s that gets misattributed to the application.
+nginx_edge_keepalive_timeout: 65s
+
+# --- Request limits ---------------------------------------------------------
+nginx_edge_client_max_body_size: 1m
+nginx_edge_client_body_buffer_size: 16k
+
+# --- Rate limiting ----------------------------------------------------------
+# NOTE: this is per node. N nodes behind the VIP means N × this rate in
+# aggregate. Size for the fleet.
+nginx_edge_rate_limit: 20r/s
+nginx_edge_rate_burst: 40
+nginx_edge_conn_limit: 20
+
+# --- Upstream ---------------------------------------------------------------
+nginx_edge_upstream_name: app_backend
+nginx_edge_upstream_servers: []
+#   - { host: 10.20.1.11, port: 8080 }
+#   - { host: 10.20.1.12, port: 8080 }
+nginx_edge_upstream_keepalive: 64
+nginx_edge_upstream_scheme: https        # re-encrypt; "internal" is not a control
+nginx_edge_proxy_connect_timeout: 3s
+nginx_edge_proxy_read_timeout: 30s
+
+nginx_edge_locations:
+  - { path: "/api/", rate_limited: true }

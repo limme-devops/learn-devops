@@ -1,0 +1,18 @@
+---
+# Reload, never restart. A restart drops every in-flight connection; a reload
+# starts new workers and lets the old ones finish what they were serving.
+#
+# The `nginx -t` here is belt and braces — the template task already validates —
+# but it also catches drift from anything that edited the box out of band.
+
+- name: reload nginx
+  ansible.builtin.command:
+    cmd: nginx -t
+  changed_when: false
+  listen: reload nginx
+
+- name: reload nginx service
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded
+  listen: reload nginx

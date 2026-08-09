@@ -1,0 +1,92 @@
+---
+# Order matters: assert inputs, install, render, validate, only then reload.
+# A config that fails `nginx -t` must never reach a running process.
+
+- name: Assert the edge is configured, not defaulted
+  ansible.builtin.assert:
+    that:
+      - nginx_edge_server_name is defined
+      - "'CHANGE_ME' not in nginx_edge_server_name"
+      - nginx_edge_upstream_servers | length > 0
+      - "'TLSv1.0' not in nginx_edge_ssl_protocols"
+      - "'TLSv1.1' not in nginx_edge_ssl_protocols"
+    fail_msg: >-
+      nginx_edge is misconfigured. A placeholder server_name, an empty upstream
+      pool, or a deprecated TLS version reached a play. Fix the group_vars.
+    quiet: true
+
+- name: Install nginx and the headers-more module
+  ansible.builtin.package:
+    name:
+      - nginx
+      # headers-more gives `more_set_headers`, which unlike `add_header` is
+      # inherited into location blocks. See docs/13-edge-gateway.md §3.3.
+      - nginx-mod-http-headers-more
+    state: present
+
+- name: Ensure TLS material directory exists
+  ansible.builtin.file:
+    path: /etc/nginx/tls
+    state: directory
+    owner: root
+    group: nginx
+    mode: "0750"
+
+- name: Verify the private key is on tmpfs, not disk
+  ansible.builtin.command:
+    cmd: "findmnt --noheadings --output FSTYPE --target {{ nginx_edge_tls_key | dirname }}"
+  register: nginx_edge_key_fs
+  changed_when: false
+  failed_when: nginx_edge_key_fs.stdout | trim != "tmpfs"
+
+- name: Render nginx.conf
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+    owner: root
+    group: root
+    mode: "0644"
+    # Validate the whole config tree before replacing the live file. If this
+    # fails, the file is not written at all and the running nginx is untouched.
+    validate: "nginx -t -c %s"
+  notify: reload nginx
+
+- name: Render the site config
+  ansible.builtin.template:
+    src: site.conf.j2
+    dest: "/etc/nginx/conf.d/{{ nginx_edge_server_name }}.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload nginx
+
+- name: Remove the distribution default site
+  ansible.builtin.file:
+    path: /etc/nginx/conf.d/default.conf
+    state: absent
+  notify: reload nginx
+
+- name: Enable and start nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: started
+    enabled: true
+
+# Flush here so the verification below runs against the new config, not the old.
+- name: Apply pending reloads before verifying
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify security headers are present on an error response
+  # Deliberately a 404: `add_header` without `always` is omitted on 4xx/5xx,
+  # which is exactly when an error page might reflect attacker input.
+  ansible.builtin.uri:
+    url: "https://{{ nginx_edge_server_name }}/__nginx_edge_probe_404"
+    status_code: [404]
+    validate_certs: true
+    return_content: false
+  register: nginx_edge_probe
+  delegate_to: localhost
+  become: false
+  failed_when: >-
+    nginx_edge_probe.strict_transport_security is not defined
+    or nginx_edge_probe.x_content_type_options | default('') != 'nosniff'

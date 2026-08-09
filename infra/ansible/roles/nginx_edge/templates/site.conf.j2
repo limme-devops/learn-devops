@@ -1,0 +1,99 @@
+{{ ansible_managed | comment }}
+
+upstream {{ nginx_edge_upstream_name }} {
+    zone {{ nginx_edge_upstream_name }} 64k;
+    least_conn;
+{% for s in nginx_edge_upstream_servers %}
+    server {{ s.host }}:{{ s.port }} max_fails=3 fail_timeout=10s;
+{% endfor %}
+    # Without keepalive, every request opens a fresh TCP+TLS connection to the
+    # app and the box runs out of ephemeral ports around 28k connections.
+    keepalive {{ nginx_edge_upstream_keepalive }};
+}
+
+# Port 80 exists only to redirect. It never proxies anything.
+server {
+    listen      80;
+    server_name {{ nginx_edge_server_name }};
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    http2  on;
+    server_name {{ nginx_edge_server_name }};
+
+    ssl_certificate     {{ nginx_edge_tls_cert }};
+    ssl_certificate_key {{ nginx_edge_tls_key }};
+
+{% if nginx_edge_mtls_enabled %}
+    # mTLS from the DMZ load balancer tier. Anything reaching this port without
+    # a client cert issued by our CA is not from our L4 layer.
+    ssl_client_certificate {{ nginx_edge_tls_client_ca }};
+    ssl_verify_client      on;
+    ssl_verify_depth       2;
+{% endif %}
+
+    # `more_set_headers` (headers-more) is inherited by location blocks.
+    # Plain `add_header` is NOT: a single add_header in a location silently
+    # drops every header set here. That is the #1 cause of "HSTS missing on
+    # one endpoint". See docs/13-edge-gateway.md §3.3.
+    more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains";
+    more_set_headers "X-Content-Type-Options: nosniff";
+    more_set_headers "X-Frame-Options: DENY";
+    more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+    more_set_headers "Content-Security-Policy: default-src 'none'; frame-ancestors 'none'";
+
+{% for loc in nginx_edge_locations %}
+    location {{ loc.path }} {
+{% if loc.rate_limited | default(false) %}
+        limit_req  zone=perip burst={{ nginx_edge_rate_burst }} nodelay;
+        limit_conn connperip {{ nginx_edge_conn_limit }};
+{% endif %}
+
+        proxy_pass {{ nginx_edge_upstream_scheme }}://{{ nginx_edge_upstream_name }};
+        proxy_ssl_verify       on;
+        proxy_ssl_trusted_certificate /etc/nginx/tls/internal-ca.crt;
+
+        # These three together are what actually enables upstream keepalive.
+        # Miss any one and the `keepalive` directive above does nothing.
+        proxy_http_version 1.1;
+        proxy_set_header   Connection "";
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        # Overwrite, never append a client-supplied value — a trusted XFF makes
+        # every IP-based control and audit log forgeable.
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Request-ID      $request_id;
+
+        proxy_connect_timeout {{ nginx_edge_proxy_connect_timeout }};
+        proxy_read_timeout    {{ nginx_edge_proxy_read_timeout }};
+        proxy_send_timeout    {{ nginx_edge_proxy_read_timeout }};
+
+        # Deliberately NOT `non_idempotent`. Default behaviour retries only
+        # idempotent requests; adding that flag retries POSTs and double-submits
+        # payments. Retries belong between services, with an idempotency key.
+        proxy_next_upstream       error timeout http_502 http_503;
+        proxy_next_upstream_tries 2;
+    }
+{% endfor %}
+
+    # Health endpoint for the L4 tier: cheap, unauthenticated, no upstream call.
+    # It answers "is this proxy alive", not "is the whole stack healthy" — if it
+    # checked the backend, one slow app would eject every proxy from the VIP.
+    location = /nginx-health {
+        access_log off;
+        more_clear_headers "Strict-Transport-Security";
+        return 200 "ok\n";
+    }
+
+    # stub_status is reconnaissance if exposed. Localhost only.
+    location = /nginx-status {
+        stub_status;
+        access_log off;
+        allow 127.0.0.1;
+        deny  all;
+    }
+}

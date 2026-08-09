@@ -1,0 +1,94 @@
+{{ ansible_managed | comment }}
+# Rendered by roles/nginx_edge. Do not edit on the host — the next Ansible run
+# reverts it, usually mid-incident, and now the outage has two causes.
+
+user                  nginx;
+worker_processes      {{ nginx_edge_worker_processes }};
+# Must exceed worker_connections, or the failure mode is "too many open files"
+# under load rather than a clean connection refusal.
+worker_rlimit_nofile  {{ nginx_edge_worker_rlimit_nofile }};
+
+pid        /run/nginx.pid;
+error_log  /var/log/nginx/error.log warn;
+
+load_module modules/ngx_http_headers_more_filter_module.so;
+
+events {
+    worker_connections  {{ nginx_edge_worker_connections }};
+    multi_accept        on;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    # --- identity hygiene ---------------------------------------------------
+    server_tokens      off;
+    more_clear_headers Server;
+    more_clear_headers X-Powered-By;
+
+    # --- TLS ----------------------------------------------------------------
+    ssl_protocols             {{ nginx_edge_ssl_protocols }};
+    ssl_ciphers               {{ nginx_edge_ssl_ciphers_flat }};
+    ssl_prefer_server_ciphers off;              # correct for TLS 1.3
+    ssl_session_cache         shared:SSL:50m;   # shared, or workers renegotiate
+    ssl_session_timeout       1d;
+    ssl_session_tickets       off;              # breaks PFS unless you rotate keys
+    ssl_stapling              on;
+    ssl_stapling_verify       on;
+    resolver                  {{ nginx_edge_resolver }} valid=300s ipv6=off;
+    resolver_timeout          5s;
+
+    # --- timeouts (DoS controls) --------------------------------------------
+    client_body_timeout       {{ nginx_edge_client_body_timeout }};
+    client_header_timeout     {{ nginx_edge_client_header_timeout }};
+    send_timeout              {{ nginx_edge_send_timeout }};
+    keepalive_timeout         {{ nginx_edge_keepalive_timeout }};
+    reset_timedout_connection on;
+
+    # --- request limits -----------------------------------------------------
+    client_max_body_size        {{ nginx_edge_client_max_body_size }};
+    client_body_buffer_size     {{ nginx_edge_client_body_buffer_size }};
+    large_client_header_buffers 4 8k;
+
+    # --- rate limiting: zones declared here, applied per location -----------
+    limit_req_zone  $binary_remote_addr zone=perip:10m rate={{ nginx_edge_rate_limit }};
+    limit_conn_zone $binary_remote_addr zone=connperip:10m;
+    # Defaults are 503, which makes deliberate throttling look like an outage
+    # in every availability dashboard you own.
+    limit_req_status  429;
+    limit_conn_status 429;
+
+    # --- logging: JSON, correlated, PII-free --------------------------------
+    # $uri, never $request — $request carries the query string, and query
+    # strings carry tokens straight into 7 years of SIEM retention.
+    log_format json escape=json '{'
+        '"ts":"$time_iso8601",'
+        '"remote_addr":"$remote_addr",'
+        '"method":"$request_method",'
+        '"uri":"$uri",'
+        '"status":$status,'
+        '"bytes":$body_bytes_sent,'
+        '"rt":$request_time,'
+        '"urt":"$upstream_response_time",'
+        '"ustatus":"$upstream_status",'
+        '"request_id":"$request_id",'
+        '"ssl_protocol":"$ssl_protocol",'
+        '"ssl_cipher":"$ssl_cipher",'
+        '"ua":"$http_user_agent"'
+    '}';
+    access_log /var/log/nginx/access.log json;
+
+    sendfile    on;
+    tcp_nopush  on;
+    tcp_nodelay on;
+
+    gzip             on;
+    gzip_proxied     no-cache no-store private expired auth;
+    gzip_types       application/json text/plain;
+    # Compressing responses that reflect a secret alongside attacker-controlled
+    # input is the BREACH attack. Pure JSON APIs behind auth are the risk case.
+    gzip_min_length  1024;
+
+    include /etc/nginx/conf.d/*.conf;
+}
