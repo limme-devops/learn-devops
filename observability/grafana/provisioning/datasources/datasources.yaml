@@ -1,0 +1,130 @@
+---
+# Grafana datasources, provisioned from file.
+#
+# Mounted into the Grafana pod at /etc/grafana/provisioning/datasources/ via a
+# ConfigMap. Grafana reads this at startup and on SIGHUP.
+#
+# WHY FILE PROVISIONING FOR DATASOURCES (and Terraform for everything else):
+# datasources must exist before any dashboard or alert rule that references them
+# can load. File provisioning runs at Grafana boot, before anything queries;
+# Terraform runs later, against an API that is already serving. Ordering is the
+# whole reason for the split. See docs/15-logging-monitoring-procedure.md §4.1.
+
+apiVersion: 1
+
+# Anything previously provisioned and now removed from this file is deleted.
+# Without this block, a datasource you delete here lingers forever in the DB.
+deleteDatasources:
+  - name: TestData
+    orgId: 1
+
+datasources:
+  # ---------------------------------------------------------------------------
+  - name: Prometheus
+    type: prometheus
+    # PIN THE UID. Dashboards reference datasources by uid, not by name. An
+    # auto-generated uid changes when Grafana is rebuilt from scratch, and every
+    # dashboard silently renders "Datasource not found". This one line is the
+    # difference between a 10-minute rebuild and a day of repair.
+    uid: prometheus-prod
+    access: proxy
+    # Query through Thanos so dashboards see the full 13 months, not just the
+    # 15 days a single Prometheus keeps locally. See docs/06 §1.
+    url: http://thanos-query-frontend.monitoring.svc:9090
+    isDefault: true
+    editable: false          # the UI physically refuses to save over this
+    jsonData:
+      httpMethod: POST       # long PromQL exceeds URL length limits on GET
+      timeInterval: 30s      # must match the Prometheus scrape_interval, or
+                             # rate() windows are computed against the wrong step
+      queryTimeout: 60s
+      manageAlerts: false    # metric alert rules live in PrometheusRule CRs,
+                             # not in Grafana. See docs/15 §4.2.
+      prometheusType: Thanos
+      exemplarTraceIdDestinations:
+        # Turns a latency histogram bucket into a clickable trace.
+        - name: trace_id
+          datasourceUid: tempo-prod
+          urlDisplayLabel: "View trace"
+
+  # ---------------------------------------------------------------------------
+  - name: Loki
+    type: loki
+    uid: loki-prod
+    access: proxy
+    url: http://loki-gateway.monitoring.svc:3100
+    editable: false
+    jsonData:
+      maxLines: 1000         # a query returning 100k lines hangs the browser,
+                             # not the backend — and always during an incident
+      timeout: 60
+      derivedFields:
+        # THE highest-value setting in this file: makes trace_id in a log line a
+        # clickable link straight to the trace. Log → trace in one click is the
+        # difference between a 2-minute and a 20-minute investigation.
+        - name: TraceID
+          matcherRegex: '"trace_id":"(\w+)"'
+          url: '$${__value.raw}'
+          datasourceUid: tempo-prod
+          urlDisplayLabel: "View trace"
+        - name: RequestID
+          matcherRegex: '"request_id":"([^"]+)"'
+          # Not a link — a filter. Lets you pivot to every line of one request.
+          url: '$${__value.raw}'
+          datasourceUid: loki-prod
+
+  # ---------------------------------------------------------------------------
+  - name: Tempo
+    type: tempo
+    uid: tempo-prod
+    access: proxy
+    url: http://tempo-query-frontend.monitoring.svc:3100
+    editable: false
+    jsonData:
+      # Completes the triangle: metric → trace → log → back to metric.
+      tracesToLogsV2:
+        datasourceUid: loki-prod
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift: "5m"
+        # Bounded labels only. Matching on trace_id here would be correct but
+        # slow; service+namespace narrows the stream first.
+        tags:
+          - { key: "service.name", value: "service" }
+          - { key: "k8s.namespace.name", value: "namespace" }
+        filterByTraceID: true
+      tracesToMetrics:
+        datasourceUid: prometheus-prod
+        tags:
+          - { key: "service.name", value: "service" }
+      nodeGraph:
+        enabled: true
+      serviceMap:
+        datasourceUid: prometheus-prod
+
+  # ---------------------------------------------------------------------------
+  - name: Elasticsearch-Audit
+    type: elasticsearch
+    uid: elasticsearch-audit
+    access: proxy
+    url: https://elasticsearch.platform.svc:9200
+    # Read-only, least-privilege account. Grafana can render audit trends;
+    # it cannot write, and it cannot delete. Detailed forensics happens in
+    # Kibana with a role that is granted per engagement. See docs/15 §3.2.
+    basicAuth: true
+    basicAuthUser: grafana-audit-reader
+    editable: false
+    database: "audit-*"
+    jsonData:
+      index: "audit-*"
+      timeField: "@timestamp"
+      esVersion: "8.0.0"
+      maxConcurrentShardRequests: 5
+      logMessageField: message
+      logLevelField: log.level
+      tlsAuthWithCACert: true
+    secureJsonData:
+      # Rendered by External Secrets from Vault into the mounted ConfigMap's
+      # sibling Secret. NEVER a literal here — gitleaks will catch it, but the
+      # point is not to write it in the first place.
+      basicAuthPassword: ${GRAFANA_ES_AUDIT_PASSWORD}
+      tlsCACert: ${GRAFANA_ES_CA_CERT}

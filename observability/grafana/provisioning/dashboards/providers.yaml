@@ -1,0 +1,49 @@
+---
+# Dashboard providers — where Grafana looks for dashboard JSON on disk.
+#
+# This file does NOT contain dashboards. It tells Grafana to load every .json
+# under the mounted paths and treat them as read-only, git-owned objects.
+#
+# Two ways to get dashboards in; this repo uses both, deliberately:
+#
+#   1. THIS FILE (sidecar/ConfigMap) — for dashboards that must exist before
+#      anyone logs in: the platform overview, the on-call landing page. They
+#      survive a total rebuild with no CI run required.
+#
+#   2. scripts/sync-dashboards.sh (HTTP API, in CI) — for service dashboards
+#      that change often. Faster loop, no pod restart, and the CI job fails
+#      loudly on a malformed dashboard instead of Grafana skipping it silently.
+#
+# See docs/15-logging-monitoring-procedure.md §4.1.
+
+apiVersion: 1
+
+providers:
+  - name: platform
+    orgId: 1
+    folder: Platform
+    folderUid: platform          # must match grafana_folder.platform in terraform/
+    type: file
+    # If a dashboard is deleted from git, delete it from Grafana too. The
+    # alternative is an ever-growing pile of dashboards nobody dares remove
+    # because nobody knows what still uses them.
+    disableDeletion: false
+    allowUiUpdates: false        # the control behind "nothing is configured in
+                                 # the UI". Save is greyed out, not just frowned on.
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/platform
+      # Mirror the directory tree into Grafana's folder tree, so the on-disk
+      # layout and the UI layout cannot drift apart.
+      foldersFromFilesStructure: false
+
+  - name: services
+    orgId: 1
+    folder: Services
+    folderUid: services
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/services

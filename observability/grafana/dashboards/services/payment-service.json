@@ -1,0 +1,369 @@
+{
+  "uid": "payment-service",
+  "title": "Payment Service",
+  "description": "Reference service dashboard. Four rows, fixed order: RED / SLO / SATURATION / DEPENDENCY. Every service dashboard uses this layout so an engineer at 3am does not have to learn a new one. See docs/15-logging-monitoring-procedure.md §4.3.",
+  "tags": ["service", "payments", "generated"],
+  "timezone": "browser",
+  "editable": false,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "env",
+        "label": "Environment",
+        "type": "custom",
+        "query": "prod,preprod,staging,dev",
+        "current": { "text": "prod", "value": "prod" },
+        "options": []
+      },
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "constant",
+        "query": "payment-service",
+        "hide": 2
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Deploys",
+        "enable": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "datasource": { "type": "prometheus", "uid": "prometheus-prod" },
+        "expr": "changes(kube_deployment_status_observed_generation{namespace=\"app-payment\"}[1m]) > 0",
+        "titleFormat": "Deploy",
+        "textFormat": "{{deployment}}",
+        "step": "60s"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "RED — what users experience",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Request rate",
+      "description": "Traffic. A drop here with no error-rate change usually means the problem is upstream of this service, not in it.",
+      "datasource": { "type": "prometheus", "uid": "prometheus-prod" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status) (rate(http_requests_total{service=\"$service\", env=\"$env\"}[5m]))",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Error rate (5xx ratio)",
+      "description": "The availability SLI numerator. 429s are excluded deliberately — deliberate throttling is the system working, not failing.",
+      "datasource": { "type": "prometheus", "uid": "prometheus-prod" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.005 },
+              { "color": "red", "value": 0.01 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(http_requests_total{service=\"$service\", env=\"$env\", status=~\"5..\"}[5m]))\n/\nsum(rate(http_requests_total{service=\"$service\", env=\"$env\"}[5m]))",
+          "legendFormat": "5xx ratio"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Latency p50 / p95 / p99",
+      "description": "p99 is the SLO. p50 rising with a flat p99 means broad slowness; p99 alone means a slow minority path — different investigations.",
+      "datasource": { "type": "prometheus", "uid": "prometheus-prod" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "fillOpacity": 0 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(http_request_duration_seconds_bucket{service=\"$service\", env=\"$env\"}[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{service=\"$service\", env=\"$env\"}[5m])))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service=\"$service\", env=\"$env\"}[5m])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "SLO — how much budget is left",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Error budget remaining (30d)",
+      "description": "99.9% target. Below 25% means feature work stops and reliability work starts — the number PMs negotiate against. See docs/12.",
+      "datasource": { "type": "prometheus", "uid": "prometheus-prod" },
+      "gridPos": { "h": 7, "w": 6, "x": 0, "y": 10 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.25 },
+              { "color": "green", "value": 0.5 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 - (\n  (1 - (sum(rate(http_requests_total{service=\"$service\", env=\"$env\", status!~\"5..\"}[30d])) / sum(rate(http_requests_total{service=\"$service\", env=\"$env\"}[30d]))))\n  / 0.001\n)"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Burn rate (1h and 6h windows)",
+      "description": "14.4x sustained over 1h exhausts a 30-day budget in ~2 days and pages. 6x over 6h tickets. Multi-window multi-burn-rate — see docs/06 §4.",
+      "datasource": { "type": "prometheus", "uid": "prometheus-prod" },
+      "gridPos": { "h": 7, "w": 12, "x": 6, "y": 10 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 6 },
+              { "color": "red", "value": 14.4 }
+            ]
+          },
+          "custom": { "thresholdsStyle": { "mode": "line" } }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate(http_requests_total{service=\"$service\", env=\"$env\", status=~\"5..\"}[1h])) / sum(rate(http_requests_total{service=\"$service\", env=\"$env\"}[1h]))) / 0.001",
+          "legendFormat": "1h burn"
+        },
+        {
+          "refId": "B",
+          "expr": "(sum(rate(http_requests_total{service=\"$service\", env=\"$env\", status=~\"5..\"}[6h])) / sum(rate(http_requests_total{service=\"$service\", env=\"$env\"}[6h]))) / 0.001",
+          "legendFormat": "6h burn"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Payment success rate",
+      "description": "The business signal. Technically healthy with this falling is still an incident — and it is the one customers and the regulator care about.",
+      "datasource": { "type": "prometheus", "uid": "prometheus-prod" },
+      "gridPos": { "h": 7, "w": 6, "x": 18, "y": 10 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.97 },
+              { "color": "green", "value": 0.99 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(payments_total{service=\"$service\", env=\"$env\", result=\"success\"}[15m]))\n/\nsum(rate(payments_total{service=\"$service\", env=\"$env\"}[15m]))"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "SATURATION — how close to the limit",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "CPU throttling",
+      "description": "Non-zero throttling means the CPU limit is hurting latency. The rollout deliberately sets no CPU limit on the edge path — if this is non-zero, check what changed.",
+      "datasource": { "type": "prometheus", "uid": "prometheus-prod" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 18 },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit" },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"app-payment\"}[5m]))\n/\nsum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"app-payment\"}[5m]))",
+          "legendFormat": "{{pod}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Memory vs limit",
+      "description": "Approaching 1.0 means an OOMKill is coming. Memory is not compressible — unlike CPU, there is no graceful degradation.",
+      "datasource": { "type": "prometheus", "uid": "prometheus-prod" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 18 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.8 },
+              { "color": "red", "value": 0.9 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"app-payment\", container!=\"\"})\n/\nsum by (pod) (kube_pod_container_resource_limits{namespace=\"app-payment\", resource=\"memory\"})",
+          "legendFormat": "{{pod}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "DB connection pool in use",
+      "description": "Pool exhaustion presents as latency, not as errors, which is why it is missed. Watch this before blaming the database.",
+      "datasource": { "type": "prometheus", "uid": "prometheus-prod" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 18 },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "max": 1 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(db_pool_connections_in_use{service=\"$service\", env=\"$env\"})\n/\nsum(db_pool_connections_max{service=\"$service\", env=\"$env\"})",
+          "legendFormat": "pool utilisation"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "DEPENDENCY — is it us or them",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Upstream error rate by target",
+      "description": "Answers 'is it us or them' in one glance. If one target is red and the rest are green, stop looking at your own code.",
+      "datasource": { "type": "prometheus", "uid": "prometheus-prod" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit" },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (upstream) (rate(upstream_requests_total{service=\"$service\", env=\"$env\", status=~\"5..\"}[5m]))\n/\nsum by (upstream) (rate(upstream_requests_total{service=\"$service\", env=\"$env\"}[5m]))",
+          "legendFormat": "{{upstream}}"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "logs",
+      "title": "Recent errors",
+      "description": "Live error log. trace_id is a clickable link to Tempo via the Loki datasource's derived fields — log to trace in one click.",
+      "datasource": { "type": "loki", "uid": "loki-prod" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "dedupStrategy": "signature"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service=\"$service\", env=\"$env\", level=\"error\"}"
+        }
+      ]
+    }
+  ],
+  "links": [
+    {
+      "title": "Runbook",
+      "type": "link",
+      "url": "https://wiki.bank.internal/runbooks/payment-service",
+      "targetBlank": true,
+      "icon": "doc"
+    },
+    {
+      "title": "SLO definition",
+      "type": "link",
+      "url": "https://gitlab.bank.internal/platform/payment-service/-/blob/main/docs/slo.md",
+      "targetBlank": true,
+      "icon": "info"
+    }
+  ]
+}
