@@ -1,0 +1,52 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kong-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: platform-alerts
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: platform-alerts
+spec:
+  project: platform-prod
+
+  sources:
+    - repoURL: https://charts.konghq.com
+      chart: kong
+      targetRevision: 2.46.0          # pinned; a floating chart is a floating gateway
+      helm:
+        releaseName: kong
+        valueFiles:
+          - $gitops/platform/kong/values.yaml
+    - repoURL: https://gitlab.bank.internal/platform/gitops.git
+      targetRevision: main
+      ref: gitops
+    # Plugins and NetworkPolicies are plain manifests, applied from the same
+    # commit as the chart values so a rollback reverts both together.
+    - repoURL: https://gitlab.bank.internal/platform/gitops.git
+      targetRevision: main
+      path: platform/kong
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: platform-kong
+
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: false                    # prod never auto-deletes
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+      - ServerSideApply=true          # the Kong CRDs are large
+    retry:
+      limit: 3
+      backoff: { duration: 30s, factor: 2, maxDuration: 5m }
+
+  # The gateway is a shared dependency for every API in the cluster. Upgrading
+  # it is its own change, in its own window — not something that rides along
+  # with an application sync. Keep it out of any automated bulk promotion.
+  revisionHistoryLimit: 10

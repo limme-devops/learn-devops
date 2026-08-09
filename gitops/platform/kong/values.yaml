@@ -1,0 +1,136 @@
+---
+# Kong Ingress Controller — DB-less mode.
+#
+# DB-less is not a downgrade; it is the point. Config comes from Kubernetes
+# CRDs reconciled by the controller, so the gateway's entire configuration is
+# in git, there is no Postgres to back up and restore under RTO pressure, and
+# the Admin API is READ-ONLY — which removes the single most dangerous endpoint
+# a gateway can expose.
+#
+# See docs/13-edge-gateway.md §5.
+
+image:
+  repository: kong
+  # Pinned by digest. Kyverno's require-signed-images policy verifies the
+  # Cosign signature at admission — a tag would let the underlying image change
+  # under a passing policy check.
+  tag: "3.9"
+  digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"  # CHANGE_ME
+
+deployment:
+  kong:
+    enabled: true
+
+env:
+  database: "off"
+  # Trust only the DMZ load balancer range for X-Forwarded-* headers. A wide
+  # value here means a client can forge its own source IP in your audit trail.
+  trusted_ips: "10.10.0.0/16"
+  real_ip_header: "X-Forwarded-For"
+  real_ip_recursive: "on"
+  # nginx underneath Kong: same hardening as the VM edge.
+  headers: "off"                      # suppresses Server / X-Kong-* disclosure
+  nginx_http_ssl_protocols: "TLSv1.2 TLSv1.3"
+  client_max_body_size: "1m"
+  client_body_buffer_size: "16k"
+
+# --- Listeners --------------------------------------------------------------
+proxy:
+  enabled: true
+  type: ClusterIP                     # ingress-nginx or the DMZ LB fronts this
+  http:
+    enabled: false                    # TLS only. There is no plaintext listener
+  tls:
+    enabled: true
+    servicePort: 443
+    containerPort: 8443
+
+admin:
+  # NEVER expose this. Read-only in DB-less mode, which is most of the
+  # mitigation, but it still enumerates every route, consumer and plugin.
+  enabled: true
+  type: ClusterIP
+  http:
+    enabled: false
+  tls:
+    enabled: true
+    containerPort: 8444
+  # No Ingress, ever. Enforced additionally by networkpolicy.yaml.
+  ingress:
+    enabled: false
+
+manager:
+  enabled: false                      # Kong Manager is a UI on the Admin API
+
+portal:
+  enabled: false
+portalapi:
+  enabled: false
+
+# --- Availability -----------------------------------------------------------
+replicaCount: 3
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2                     # never let a drain take the estate down
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: kong
+
+resources:
+  requests: { cpu: 500m, memory: 512Mi }
+  limits:   { memory: 1Gi }           # no CPU limit: throttling the edge under
+                                      # load turns a busy minute into an outage
+
+# Longer than the longest request, so a rollout never cuts an in-flight call.
+terminationGracePeriodSeconds: 60
+lifecycle:
+  preStop:
+    exec:
+      command: ["/bin/sh", "-c", "kong quit --wait=45"]
+
+readinessProbe:
+  httpGet: { path: /status/ready, port: status, scheme: HTTP }
+  initialDelaySeconds: 5
+  periodSeconds: 5
+livenessProbe:
+  httpGet: { path: /status, port: status, scheme: HTTP }
+  initialDelaySeconds: 10
+  periodSeconds: 10
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile: { type: RuntimeDefault }
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# --- Controller -------------------------------------------------------------
+ingressController:
+  enabled: true
+  ingressClass: kong
+  # Only watch namespaces that are meant to publish APIs. Without this, any
+  # namespace in the cluster can create a route on the shared gateway.
+  watchNamespaces:
+    - app-payment
+  env:
+    publish_service: platform-kong/kong-proxy
+    # Reject config the gateway would refuse anyway, at admission time, rather
+    # than discovering it when the reconcile loop silently keeps stale config.
+    admission_webhook_listen: "0.0.0.0:8080"
+  rbac:
+    create: true
+
+serviceMonitor:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack

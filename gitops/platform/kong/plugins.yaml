@@ -1,0 +1,162 @@
+---
+# Global (cluster-wide) Kong plugins.
+#
+# ORDERING: Kong runs access-phase plugins in DESCENDING `priority`. The order
+# below is the order they execute, and it is not cosmetic:
+#
+#   cors (~2000) ──► auth (~1450) ──► acl (~950) ──► size (~951) ──► rate (~910)
+#        │               │               │                              │
+#        │               │               │                    keyed by CONSUMER
+#        │               │               └─ needs a consumer to exist
+#        │               └─ establishes WHO
+#        └─ must precede auth: a browser preflight OPTIONS carries no
+#           credentials by spec, so auth-first returns 401 and the real
+#           request is never sent.
+#
+# Priorities shift between Kong majors — verify against your version's plugin
+# docs rather than trusting the numbers in this comment.
+# See docs/13-edge-gateway.md §5.2.
+
+apiVersion: configuration.konghq.com/v1
+kind: KongClusterPlugin
+metadata:
+  name: correlation-id
+  annotations:
+    kubernetes.io/ingress.class: kong
+  labels:
+    global: "true"
+plugin: correlation-id
+config:
+  header_name: X-Request-ID
+  generator: uuid#counter
+  # Echo it back so a customer reporting a failure can quote an id that appears
+  # in the gateway log, the app log and the trace.
+  echo_downstream: true
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongClusterPlugin
+metadata:
+  name: request-size-limiting
+  annotations:
+    kubernetes.io/ingress.class: kong
+  labels:
+    global: "true"
+plugin: request-size-limiting
+config:
+  allowed_payload_size: 1          # MB
+  size_unit: megabytes
+  require_content_length: false
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongClusterPlugin
+metadata:
+  name: rate-limiting-global
+  annotations:
+    kubernetes.io/ingress.class: kong
+  labels:
+    global: "true"
+plugin: rate-limiting
+config:
+  minute: 600
+  # `consumer` — NOT `ip`. A shared corporate NAT means IP-keyed limits throttle
+  # an entire branch office because one user misbehaved.
+  limit_by: consumer
+  # `policy: local` counts per data-plane pod, so 3 replicas silently means 3×
+  # the limit you documented. Never quote a local-policy number in a contract.
+  policy: redis
+  redis_host: redis.platform.svc.cluster.local
+  redis_port: 6379
+  redis_ssl: true
+  redis_ssl_verify: true
+  # Vault reference — no credential in git. Requires a Kong vault backend named
+  # `kong-vault`; see security/vault/ for the policy.
+  redis_password: "{vault://kong-vault/redis/password}"
+  fault_tolerant: true             # Redis down must not take the API down
+  # 429 + Retry-After. The default error code is fine; the header is what makes
+  # a well-behaved client back off instead of hammering.
+  hide_client_headers: false
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongClusterPlugin
+metadata:
+  name: prometheus
+  annotations:
+    kubernetes.io/ingress.class: kong
+  labels:
+    global: "true"
+plugin: prometheus
+config:
+  status_code_metrics: true
+  latency_metrics: true
+  upstream_health_metrics: true
+  bandwidth_metrics: false
+  # per_consumer multiplies every series by your consumer count. Only enable it
+  # for a small, bounded, contractual set — it has taken Prometheus down before.
+  per_consumer: false
+---
+# Per-route auth. Attach with:
+#   konghq.com/plugins: jwt-keycloak
+# on the Ingress or Service. NOT global — a global auth plugin also guards the
+# health endpoints and the ACME challenge path.
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: jwt-keycloak
+  namespace: app-payment
+  annotations:
+    kubernetes.io/ingress.class: kong
+plugin: jwt
+config:
+  claims_to_verify:
+    - exp
+    - nbf
+  key_claim_name: iss
+  maximum_expiration: 3600         # reject long-lived tokens outright
+  run_on_preflight: false          # let the CORS preflight through, per above
+---
+# Authorization: scopes map to ACL groups. Auth says who; this says what.
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: acl-payments
+  namespace: app-payment
+  annotations:
+    kubernetes.io/ingress.class: kong
+plugin: acl
+config:
+  allow:
+    - payments-read
+    - payments-write
+  hide_groups_header: true
+---
+# Upstream behaviour for the payment service.
+apiVersion: configuration.konghq.com/v1
+kind: KongIngress
+metadata:
+  name: payment-upstream
+  namespace: app-payment
+proxy:
+  protocol: https                  # re-encrypt to the pod
+  connect_timeout: 3000
+  read_timeout: 30000
+  write_timeout: 30000
+  # THE most important line in this file. Kong's default is 5. A retried POST
+  # /payments against a slow-but-successful upstream submits the payment twice.
+  # Retries belong between services, with an idempotency key.
+  retries: 0
+upstream:
+  healthchecks:
+    active:
+      type: https
+      http_path: /healthz
+      healthy:
+        interval: 5
+        successes: 2
+      unhealthy:
+        interval: 5
+        http_failures: 3
+        timeouts: 3
+    passive:
+      unhealthy:
+        http_failures: 5
+        timeouts: 5

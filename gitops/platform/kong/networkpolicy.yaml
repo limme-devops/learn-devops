@@ -1,0 +1,105 @@
+---
+# Default deny for the whole gateway namespace. Everything below is an
+# explicit, justified exception.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: platform-kong
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kong-proxy-ingress
+  namespace: platform-kong
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kong
+  policyTypes: ["Ingress"]
+  ingress:
+    # Proxy traffic — only from the ingress tier. Nothing else in the cluster
+    # gets to call the gateway directly and skip the edge's controls.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - { protocol: TCP, port: 8443 }
+    # Metrics scrape.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - { protocol: TCP, port: 8100 }
+    # Admission webhook — from the apiserver only. The 2025 ingress-nginx RCE
+    # (CVE-2025-1974) was reachable precisely because an admission endpoint was
+    # open pod-to-pod. Same class of exposure, same mitigation.
+    - from:
+        - ipBlock:
+            cidr: 10.0.0.0/16          # CHANGE_ME: apiserver / control plane range
+      ports:
+        - { protocol: TCP, port: 8080 }
+  # NOTE: port 8444 (Admin API) appears in NO ingress rule above. That is
+  # deliberate and is the enforcement behind "never expose the Admin API".
+  # Reach it with `kubectl port-forward`, which is audited, or not at all.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kong-egress
+  namespace: platform-kong
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kong
+  policyTypes: ["Egress"]
+  egress:
+    # DNS. The rule everyone forgets, and the reason "the NetworkPolicy broke
+    # everything" is nearly always a resolution failure, not a routing one.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # Upstream services it actually proxies to. Add a rule per namespace —
+    # never a blanket allow to the pod CIDR.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: app-payment
+      ports:
+        - { protocol: TCP, port: 8080 }
+    # Redis, for the rate-limit counters.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - { protocol: TCP, port: 6379 }
+    # Keycloak, for JWKS. Without this the JWT plugin fails closed on every
+    # key rotation and every request 401s — a genuinely confusing outage.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform-keycloak
+      ports:
+        - { protocol: TCP, port: 8443 }
+    # Kubernetes API, for the ingress controller's reconcile loop.
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/16          # CHANGE_ME: apiserver range
+      ports:
+        - { protocol: TCP, port: 6443 }
