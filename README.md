@@ -41,7 +41,9 @@ learn-devops/
 │   ├── gitlab/templates/  Reusable security stage
 │   ├── jenkins/           VM rollout orchestration
 │   └── scripts/           bump-digest (promotion), smoke (verification)
+├── observability/         Grafana as code: datasources, dashboards, alert routing
 ├── local-lab/             kind cluster — run and break this locally
+├── cheatsheets/           Per-tool quick reference + interview Q&A
 └── Makefile               make help
 ```
 
@@ -62,6 +64,10 @@ learn-devops/
 | 10 | [Deployment Strategies](docs/10-deployment-strategies.md) | Canary, blue/green, migrations, rollback, freezes |
 | 11 | [Deployment Roadmap](docs/11-deployment-roadmap.md) | **Step-by-step build order**, core concepts, verification per step |
 | 12 | [Stakeholder Communication](docs/12-stakeholder-communication.md) | Working with PM, PO, Ops; question bank; meeting procedures |
+| 13 | [Edge & API Gateway](docs/13-edge-gateway.md) | NGINX, ingress-nginx, Kong; TLS, headers, rate limits, retries |
+| 14 | [Promotion Procedure](docs/14-promotion-procedure.md) | dev→staging→preprod→prod, image build/tagging, CI variable injection |
+| 15 | [Logging & Monitoring Procedure](docs/15-logging-monitoring-procedure.md) | Loki/Kibana tiers, Grafana as code, Gravitee API metrics, alert lifecycle |
+| 16 | [Private-Access Deployment](docs/16-private-access-deployment.md) | Internal-only services: split-horizon + wildcard DNS/TLS, VPN, OIDC per app, verification matrix |
 
 **Reading order** — building: **11** → 01 → 02 → 03 → 05 → 10 → 04 → 06 → 07 ·
 learning: 00 → 03 → 01 → 04 → 06 → 07 → 08 · auditing: 03 → 07 → 09 ·
@@ -70,6 +76,30 @@ before any meeting: 12
 Start at **[docs/11-deployment-roadmap.md](docs/11-deployment-roadmap.md)** — it
 sequences everything else into 21 steps, each with its own verification and exit
 criteria.
+
+## Cheat sheets
+
+The `docs/` set explains *why this platform is built this way*.
+**[cheatsheets/](cheatsheets/)** is the per-tool quick reference for when you are
+doing the work — and the interview answers that go with each one. Every folder
+holds a `README.md` (commands, config, best practices, gotchas) and an
+`interview-qna.md`.
+
+| Folder | Covers |
+|---|---|
+| [00-interview-playbook](cheatsheets/00-interview-playbook/) | How to answer, cross-cutting system design, red flags, rapid-fire definitions |
+| [01-docker](cheatsheets/01-docker/) | Images, layers, multi-stage builds, Compose, registries, runtime hardening |
+| [02-kubernetes](cheatsheets/02-kubernetes/) | Workloads, probes, networking, RBAC, scheduling, debugging, Helm/Kustomize |
+| [03-ansible](cheatsheets/03-ansible/) | Inventory, roles, idempotency, Vault, rolling VM deploys |
+| [04-nginx](cheatsheets/04-nginx/) | Reverse proxy, TLS, rate limits, caching, tuning, ingress-nginx |
+| [05-kong](cheatsheets/05-kong/) | DB-less config, plugin order, consumers, JWT/OIDC, KIC |
+| [06-gravitee](cheatsheets/06-gravitee/) | APIM, policies, plans/subscriptions, sharding tags, AM |
+| [07-grafana-prometheus](cheatsheets/07-grafana-prometheus/) | PromQL, rules, dashboards, SLOs, burn-rate alerting |
+| [08-elk-kibana](cheatsheets/08-elk-kibana/) | Elasticsearch, ILM, shipping, KQL, log hygiene |
+| [09-devsecops](cheatsheets/09-devsecops/) | Pipeline gates, SBOM, signing, admission control, compliance evidence |
+| [10-cicd-gitops](cheatsheets/10-cicd-gitops/) | GitLab CI, Jenkins, ArgoCD, promotion by digest, rollback |
+| [11-terraform](cheatsheets/11-terraform/) | HCL, state and locking, modules, environments, drift, policy gates |
+| [12-vpn-private-access](cheatsheets/12-vpn-private-access/) | WireGuard/IPsec, split tunnel, split-horizon DNS, bastions, identity-aware proxies |
 
 ## Start here
 
@@ -100,7 +130,10 @@ canary abort, break a probe on purpose).
 | Burn-rate SLO alerts + business alerts | `.../base/prometheusrule.yaml` |
 | Promotion = one digest commit | `ci/scripts/bump-digest.sh` |
 | Admission control, fail-closed | `security/kyverno/baseline-policies.yaml` |
+| Rebuild all of Grafana from git | `observability/grafana/` (pinned uids, Terraform routing) |
 | Least-privilege Vault policy | `security/vault/policies/payment-service.hcl` |
+| Hardened NGINX edge (validated reload, no snippet sprawl) | `infra/ansible/roles/nginx_edge/` |
+| Kong DB-less gateway, plugin order, `retries: 0` on payments | `gitops/platform/kong/` |
 
 ## Non-negotiables
 
