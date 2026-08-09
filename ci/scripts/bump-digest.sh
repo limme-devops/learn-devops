@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Author: Mengty LIM
 #
 # The promotion mechanism. Deploying to an environment means committing a new
 # image digest to that environment's overlay — nothing else.

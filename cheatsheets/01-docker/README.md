@@ -1,5 +1,7 @@
 # Docker Cheat Sheet
 
+> **Author:** Mengty LIM
+
 Images, layers, builds, Compose, registries, runtime hardening.
 
 ---

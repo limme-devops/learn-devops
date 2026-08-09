@@ -1,5 +1,7 @@
 # DevSecOps Cheat Sheet
 
+> **Author:** Mengty LIM
+
 Pipeline gates, SAST/DAST/SCA, secrets, supply chain, admission control,
 runtime detection, compliance.
 

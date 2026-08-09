@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # Argo Rollouts needs THREE services for the nginx canary:
 #  - stable : selector pinned to the stable ReplicaSet

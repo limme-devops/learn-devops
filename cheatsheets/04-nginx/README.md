@@ -1,5 +1,7 @@
 # NGINX Cheat Sheet
 
+> **Author:** Mengty LIM
+
 Reverse proxy, TLS, rate limiting, caching, headers, tuning, ingress-nginx.
 
 ---

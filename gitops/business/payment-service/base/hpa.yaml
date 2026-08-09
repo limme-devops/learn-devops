@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler

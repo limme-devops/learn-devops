@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Author: Mengty LIM
 #
 # Post-deployment smoke test, run through the public entry point rather than
 # against a pod. It verifies the whole path — LB, ingress, TLS, auth, app, DB —

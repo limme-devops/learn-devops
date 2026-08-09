@@ -1,5 +1,7 @@
 # Terraform Cheat Sheet
 
+> **Author:** Mengty LIM
+
 HCL, state, modules, workspaces vs directories, providers, policy gates, CI.
 
 ---

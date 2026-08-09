@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 # compute-vm — a pool of identical VMs cloned from a Packer-built golden image.
 #
 # Design rule: this module never installs software. It produces hardware + an

@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 vsphere_server     = "vcenter-dc1.bank.internal"
 vsphere_datacenter = "DC1"
 vsphere_cluster    = "NONPROD-CLUSTER-01"

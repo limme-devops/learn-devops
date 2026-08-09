@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # Monthly patching. Rolls through the fleet one node at a time with the same
 # drain/health/soak discipline as a deployment, because a patch IS a deployment.

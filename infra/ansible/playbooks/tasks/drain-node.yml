@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # Take the current host out of the load balancer pool, gracefully.
 # Included by deploy-app.yml and patch.yml so both use identical semantics.

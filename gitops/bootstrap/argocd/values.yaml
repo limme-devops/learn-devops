@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # argo-cd Helm chart values (prod). Applied once at bootstrap, then managed by
 # Argo itself.

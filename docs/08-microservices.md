@@ -1,5 +1,7 @@
 # Microservices — Design & Operational Concerns
 
+> **Author:** Mengty LIM
+
 ## 1. When NOT to use microservices
 
 Start with a modular monolith unless you have: independent scaling needs, independent release cadence per team, or hard team-boundary reasons. Microservices trade in-process calls (fast, reliable, transactional) for network calls (slow, unreliable, eventually consistent) plus N× the operational surface. In a bank, that trade also multiplies your audit scope. Split only where a boundary genuinely exists.

@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 output "cluster_name" {
   value = local.cluster_name
 }

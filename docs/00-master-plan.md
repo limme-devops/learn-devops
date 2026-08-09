@@ -1,5 +1,7 @@
 # Secure Deployment Platform — Master Plan
 
+> **Author:** Mengty LIM
+
 > Target posture: regulated / bank-grade production (PCI-DSS, ISO 27001, SOC 2 controls map cleanly onto this).
 > Two delivery tracks run in parallel: **Track A — VM servers**, **Track B — Kubernetes**.
 

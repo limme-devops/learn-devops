@@ -1,5 +1,7 @@
 # Logging, Monitoring & Alerting — Operating Procedure
 
+> **Author:** Mengty LIM
+
 [06-observability.md](06-observability.md) decides *what* the stack is and *what*
 to instrument. This document is the **procedure**: how logs get from a process
 to a screen, how dashboards and alert rules are changed without clicking, how

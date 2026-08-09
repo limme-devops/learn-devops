@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # A local cluster shaped like the real one: one control plane, three workers
 # with the same node labels the overlays select on. Node labels matter — if the

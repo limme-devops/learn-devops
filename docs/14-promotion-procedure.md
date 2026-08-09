@@ -1,5 +1,7 @@
 # Environment Promotion Procedure — Build Once, Move One Artifact
 
+> **Author:** Mengty LIM
+
 How a change gets from a developer's branch to production: what is built, what
 is promoted, what is *not* rebuilt, which values are injected where, and who
 approves each hop.

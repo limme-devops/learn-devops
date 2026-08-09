@@ -1,5 +1,7 @@
 # Edge & API Gateway — NGINX, Kong, and the Layers Between
 
+> **Author:** Mengty LIM
+
 The edge is the only part of the platform an attacker can reach without already
 being inside. It is also the only place where one bad config line takes down
 every service at once. Treat it as a **product with its own release process**,

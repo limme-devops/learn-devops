@@ -1,5 +1,7 @@
 # Deployment Cheat Sheets
 
+> **Author:** Mengty LIM
+
 Fast-reference material for the tools this platform runs on, plus the interview
 answers that go with them.
 

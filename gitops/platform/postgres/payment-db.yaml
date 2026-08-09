@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # PostgreSQL via CloudNativePG. The operator owns failover, WAL archiving and
 # PITR — all things that are painful and error-prone to hand-roll on a

@@ -1,5 +1,7 @@
 # Grafana & Prometheus Cheat Sheet
 
+> **Author:** Mengty LIM
+
 Metrics, PromQL, recording and alerting rules, dashboards, SLOs, burn rates.
 
 Companion: [docs/06-observability.md](../../docs/06-observability.md).

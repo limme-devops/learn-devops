@@ -1,5 +1,7 @@
 # Gravitee Cheat Sheet
 
+> **Author:** Mengty LIM
+
 API management (APIM), policies, plans and subscriptions, Access Management (AM).
 
 > **Naming check.** This covers **Gravitee.io** — the open-source API management

@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 """Minimal reference service.
 
 Exists to demonstrate the operational contract every service in this platform

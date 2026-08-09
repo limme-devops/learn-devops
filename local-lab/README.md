@@ -1,5 +1,7 @@
 # Local Lab
 
+> **Author:** Mengty LIM
+
 A local cluster you can actually break. The point of this directory is that
 every pattern in `gitops/` and `security/` can be exercised without vSphere,
 Vault, Harbor, or a bank.

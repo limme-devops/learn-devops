@@ -1,5 +1,7 @@
 # DevSecOps Security Baseline
 
+> **Author:** Mengty LIM
+
 ## 1. Pipeline gates — what blocks a build
 
 Order matters: cheapest and fastest first, so developers get feedback in seconds.

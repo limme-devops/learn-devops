@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # vault-agent: authenticates with AppRole, renders secrets to tmpfs, and signals
 # the application when they rotate. This is what removes static credentials from

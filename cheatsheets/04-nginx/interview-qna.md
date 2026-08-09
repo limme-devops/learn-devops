@@ -1,5 +1,7 @@
 # NGINX — Interview Q&A
 
+> **Author:** Mengty LIM
+
 ---
 
 ## Architecture

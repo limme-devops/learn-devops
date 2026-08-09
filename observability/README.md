@@ -1,5 +1,7 @@
 # `observability/` — the monitoring stack as code
 
+> **Author:** Mengty LIM
+
 Grafana holds nothing that is not in this directory. If a datasource, folder,
 permission, contact point, notification route or dashboard exists only in the
 running instance, it is a bug — and it disappears the day someone rebuilds.

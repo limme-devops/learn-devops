@@ -1,5 +1,7 @@
 # Platform Services on Kubernetes — Deployment Guide
 
+> **Author:** Mengty LIM
+
 General rules for every stateful service below:
 - **Use the operator, not a raw StatefulSet**, where a mature one exists. Operators handle failover, backup, and upgrades that you would otherwise hand-roll badly.
 - Dedicated namespace, dedicated ServiceAccount, `default-deny` NetworkPolicy with explicit allows.

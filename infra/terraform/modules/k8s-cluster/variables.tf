@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 variable "environment" {
   type        = string
   description = "Environment name."

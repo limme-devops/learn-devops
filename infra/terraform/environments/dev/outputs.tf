@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 output "k8s_apiserver_endpoint" {
   value = module.k8s.apiserver_endpoint
 }

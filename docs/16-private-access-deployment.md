@@ -1,5 +1,7 @@
 # Private-Access Deployment Procedure — Internal Apps, Wildcard DNS/TLS, VPN
 
+> **Author:** Mengty LIM
+
 How to deploy a service that must **not** be reachable from the internet, and
 how the people who are allowed to reach it actually get there.
 

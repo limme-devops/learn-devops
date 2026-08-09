@@ -1,5 +1,7 @@
 # Secure Deployment Platform
 
+> **Author:** Mengty LIM
+
 Reference implementation and planning docs for a bank-grade secure deployment
 platform across two delivery tracks: **VM servers** and **Kubernetes**.
 

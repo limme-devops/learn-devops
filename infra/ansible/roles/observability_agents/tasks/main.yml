@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # node_exporter + promtail + otel-collector. Installed on every host so that
 # VM-track and K8s-track workloads land in the same Prometheus/Loki/Tempo.

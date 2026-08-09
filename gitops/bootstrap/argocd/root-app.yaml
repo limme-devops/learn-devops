@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # App-of-apps root. This is the ONLY thing applied to a cluster by hand:
 #   kubectl apply -f gitops/bootstrap/argocd/projects.yaml

@@ -1,5 +1,7 @@
 # payment-service — Runbook
 
+> **Author:** Mengty LIM
+
 **Severity range:** P1–P3 | **Owner:** payments-team | **Last tested:** 2026-08-08
 
 Every alert in `prometheusrule.yaml` links here. If you add an alert without

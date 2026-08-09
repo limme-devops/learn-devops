@@ -1,5 +1,7 @@
 # VPN & Private Access Cheat Sheet
 
+> **Author:** Mengty LIM
+
 WireGuard, IPsec, split tunnel, split-horizon DNS, bastions, identity-aware
 proxies, and private access to Kubernetes.
 

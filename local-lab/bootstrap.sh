@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Author: Mengty LIM
 #
 # Bring the local lab to a state where the manifests in gitops/ actually apply.
 # Deliberately installs the *enforcing* components (Cilium, Kyverno, Argo

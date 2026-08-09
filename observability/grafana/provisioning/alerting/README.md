@@ -1,5 +1,7 @@
 # `provisioning/alerting/` — deliberately almost empty
 
+> **Author:** Mengty LIM
+
 Grafana can provision alert rules, contact points and notification policies from
 YAML files in this directory. **This platform does not use that mechanism**, and
 the empty directory is here so nobody adds one by accident.

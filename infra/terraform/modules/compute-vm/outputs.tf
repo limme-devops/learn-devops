@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 output "instances" {
   description = "Map of hostname => { ip, uuid, zone }."
   value = {

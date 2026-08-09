@@ -1,5 +1,7 @@
 # ELK / Kibana — Interview Q&A
 
+> **Author:** Mengty LIM
+
 ---
 
 ## Elasticsearch

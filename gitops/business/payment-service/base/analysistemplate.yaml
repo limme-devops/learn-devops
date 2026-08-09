@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # Canary analysis. These queries are the automated gate that decides whether a
 # release proceeds — a human watching a dashboard is not a gate.

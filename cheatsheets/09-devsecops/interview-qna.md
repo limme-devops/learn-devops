@@ -1,5 +1,7 @@
 # DevSecOps — Interview Q&A
 
+> **Author:** Mengty LIM
+
 These are the questions where interviewers are listening for judgement rather
 than tool names. Say what you'd enforce, what you'd let through, and why.
 

@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # Default deny for the whole gateway namespace. Everything below is an
 # explicit, justified exception.

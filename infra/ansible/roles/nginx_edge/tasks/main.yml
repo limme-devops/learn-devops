@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # Order matters: assert inputs, install, render, validate, only then reload.
 # A config that fails `nginx -t` must never reach a running process.

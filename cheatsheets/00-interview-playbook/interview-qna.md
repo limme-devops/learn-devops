@@ -1,5 +1,7 @@
 # Cross-Cutting Interview Q&A
 
+> **Author:** Mengty LIM
+
 Questions that don't belong to a single tool: system design, reliability
 judgement, and behavioural. Tool-specific questions live in the other folders.
 

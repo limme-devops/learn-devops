@@ -1,5 +1,7 @@
 # Deployment Strategies — Choosing and Implementing
 
+> **Author:** Mengty LIM
+
 ## 1. Decision table
 
 | Strategy | Downtime | Cost | Rollback speed | Blast radius on bad release | Use when |

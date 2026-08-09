@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # CIS hardening. The community RHEL9-CIS role does the bulk; this role applies
 # our documented exceptions and the controls the benchmark does not cover.

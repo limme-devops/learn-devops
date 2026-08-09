@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # Database migration as a PreSync hook: it runs to completion BEFORE the new
 # pods start, exactly once per sync, not N times racing in N pod startups.

@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # AppProjects are the guardrails. Without them, any Application in the argocd
 # namespace can deploy anything, anywhere — which makes Argo itself the softest

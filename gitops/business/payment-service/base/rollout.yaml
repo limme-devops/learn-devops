@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # Argo Rollout instead of a Deployment: same pod spec, plus automated canary
 # analysis and instant abort (docs/10-deployment-strategies.md §2).

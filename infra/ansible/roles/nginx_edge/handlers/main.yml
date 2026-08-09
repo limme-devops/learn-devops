@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # Reload, never restart. A restart drops every in-flight connection; a reload
 # starts new workers and lets the old ones finish what they were serving.

@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 # The notification policy tree — how a firing alert finds a human.
 #
 # Read top to bottom. The FIRST matching child policy wins unless it sets

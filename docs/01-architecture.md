@@ -1,5 +1,7 @@
 # Architecture — VM Track and Kubernetes Track
 
+> **Author:** Mengty LIM
+
 ## 1. Network zoning (applies to both tracks)
 
 Bank-grade deployments are zone-segmented. Traffic only ever moves *inward* through a controlled hop.

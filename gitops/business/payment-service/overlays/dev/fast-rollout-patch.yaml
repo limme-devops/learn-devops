@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # Dev skips the canary entirely. A 40-minute progressive rollout in dev only
 # teaches developers to hate the pipeline; the canary exists to protect real

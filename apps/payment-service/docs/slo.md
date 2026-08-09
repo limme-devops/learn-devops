@@ -1,5 +1,7 @@
 # payment-service — Service Level Objectives
 
+> **Author:** Mengty LIM
+
 Required before production (docs/08-microservices.md §7). The numbers here must
 match the canary analysis thresholds in
 `gitops/business/payment-service/base/analysistemplate.yaml` and the alert

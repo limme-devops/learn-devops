@@ -1,5 +1,7 @@
 # Kubernetes Cheat Sheet
 
+> **Author:** Mengty LIM
+
 Workloads, networking, storage, security, scheduling, debugging.
 
 ---

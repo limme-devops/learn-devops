@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # Default deny — both directions. Everything below is an explicit exception.
 apiVersion: networking.k8s.io/v1

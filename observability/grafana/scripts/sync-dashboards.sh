@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Author: Mengty LIM
 #
 # Sync dashboard JSON from git into Grafana via the HTTP API.
 # Runs in CI on merge to main. Idempotent — safe to re-run.

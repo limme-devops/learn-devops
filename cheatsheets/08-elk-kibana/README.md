@@ -1,5 +1,7 @@
 # ELK / Kibana Cheat Sheet
 
+> **Author:** Mengty LIM
+
 Elasticsearch, ingest (Beats / Logstash / Elastic Agent), ILM, KQL, Kibana,
 log hygiene.
 

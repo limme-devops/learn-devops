@@ -1,5 +1,7 @@
 # Backup Strategy & Disaster Recovery
 
+> **Author:** Mengty LIM
+
 > A backup that has never been restored is a hypothesis, not a backup.
 
 ## 1. The core concepts

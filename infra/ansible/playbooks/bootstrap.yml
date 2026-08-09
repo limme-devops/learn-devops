@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # First contact with a freshly cloned VM. Run once, with the short-lived
 # bootstrap key that Terraform injected. Its final act is to remove that key —

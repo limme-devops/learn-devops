@@ -1,5 +1,7 @@
 # HashiCorp Vault Cheat Sheet
 
+> **Author:** Mengty LIM
+
 Seal/unseal, auth methods, engines, dynamic credentials, PKI, Transit, policies,
 Kubernetes and CI integration, HA and disaster recovery.
 

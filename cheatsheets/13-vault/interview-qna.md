@@ -1,5 +1,7 @@
 # HashiCorp Vault — Interview Q&A
 
+> **Author:** Mengty LIM
+
 ---
 
 ## Fundamentals

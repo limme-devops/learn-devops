@@ -1,5 +1,7 @@
 # Docker — Interview Q&A
 
+> **Author:** Mengty LIM
+
 Answers are written the way you should say them: the short answer first, then
 the reason, then the trade-off. Interviewers probe the second sentence.
 

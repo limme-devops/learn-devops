@@ -1,5 +1,7 @@
 # Grafana & Prometheus — Interview Q&A
 
+> **Author:** Mengty LIM
+
 ---
 
 ## Fundamentals

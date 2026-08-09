@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # Without a PDB, draining a node for patching can evict every replica at once.
 # minAvailable (not maxUnavailable) so the guarantee scales with the HPA.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Author: Mengty LIM
 #
 # Vault configuration as code. Run from CI against a Vault that is already
 # initialised and unsealed. Idempotent — safe to re-run.

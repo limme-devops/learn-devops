@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 title = "learn-devops gitleaks config"
 
 # Start from the maintained default ruleset, then add our own.

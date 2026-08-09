@@ -1,5 +1,7 @@
 # Kong — Interview Q&A
 
+> **Author:** Mengty LIM
+
 ---
 
 ## Concepts

@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 variable "environment" {
   description = "Environment name; prefixes every resource and drives policy strictness."
   type        = string

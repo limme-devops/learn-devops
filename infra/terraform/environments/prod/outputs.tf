@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 output "k8s_apiserver_endpoint" {
   description = "Cluster API endpoint for kubeconfig generation."
   value       = module.k8s.apiserver_endpoint

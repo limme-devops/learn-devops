@@ -1,5 +1,7 @@
 # Terraform — Interview Q&A
 
+> **Author:** Mengty LIM
+
 ---
 
 ## Fundamentals

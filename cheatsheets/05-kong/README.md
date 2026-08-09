@@ -1,5 +1,7 @@
 # Kong Cheat Sheet
 
+> **Author:** Mengty LIM
+
 DB-less config, entities, plugins and their order, consumers, JWT/OIDC, Kong
 Ingress Controller.
 

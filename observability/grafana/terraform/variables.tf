@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 variable "grafana_url" {
   description = "Base URL of the Grafana instance this state manages."
   type        = string

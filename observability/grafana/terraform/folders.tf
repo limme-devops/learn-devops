@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 # Folders and permissions.
 #
 # Folder UIDs are pinned and must match:

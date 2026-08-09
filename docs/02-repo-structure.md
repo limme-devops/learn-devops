@@ -1,5 +1,7 @@
 # Repository & Folder Structure
 
+> **Author:** Mengty LIM
+
 ## 1. Multi-repo layout (recommended for regulated environments)
 
 Separate repos give you separate access control and separate audit trails — which auditors will ask for. A monorepo is fine for learning; split before prod.

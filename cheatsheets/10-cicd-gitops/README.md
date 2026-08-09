@@ -1,5 +1,7 @@
 # CI/CD & GitOps Cheat Sheet
 
+> **Author:** Mengty LIM
+
 GitLab CI, Jenkins, ArgoCD, promotion by digest, deployment strategies, rollback.
 
 Companions: [docs/05-cicd-automation.md](../../docs/05-cicd-automation.md),

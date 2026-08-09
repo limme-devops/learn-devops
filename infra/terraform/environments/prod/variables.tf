@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 variable "vsphere_server" { type = string }
 variable "vsphere_datacenter" { type = string }
 variable "vsphere_cluster" { type = string }

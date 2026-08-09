@@ -1,5 +1,7 @@
 # Observability, Monitoring & Alerting
 
+> **Author:** Mengty LIM
+
 ## 1. Stack
 
 | Signal | Tool | Storage / retention |

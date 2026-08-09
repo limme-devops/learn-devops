@@ -1,3 +1,4 @@
+# Author: Mengty LIM
 ---
 # Return the current host to the pool — but only after it proves it is healthy.
 # Never re-enable a node you have not health-checked; that is how you turn a

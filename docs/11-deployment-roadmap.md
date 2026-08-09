@@ -1,5 +1,7 @@
 # Deployment Roadmap — Step by Step
 
+> **Author:** Mengty LIM
+
 How to build this platform from nothing, in an order where each step is usable
 on its own and nothing has to be rebuilt later.
 

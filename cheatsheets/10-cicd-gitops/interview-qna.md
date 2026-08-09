@@ -1,5 +1,7 @@
 # CI/CD & GitOps — Interview Q&A
 
+> **Author:** Mengty LIM
+
 ---
 
 **Q1. What is GitOps, and what does it buy you over a push pipeline?**

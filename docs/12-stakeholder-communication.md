@@ -1,5 +1,7 @@
 # Working with PM, PO, Operations and the Business
 
+> **Author:** Mengty LIM
+
 How to run these conversations so they end in a decision, and so you come across
 as someone who knows what they are doing — because you do, and the only thing
 missing is the translation layer.

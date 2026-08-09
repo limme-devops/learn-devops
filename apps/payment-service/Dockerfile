@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1.7
+# Author: Mengty LIM
 #
 # Multi-stage, distroless, non-root, no shell in the final image.
 # The base images are digest-pinned to internal mirrors — a tag on a base image
