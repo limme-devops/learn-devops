@@ -4,6 +4,7 @@ SHELL := /bin/bash
 ENV ?= dev
 TF_DIR := infra/terraform/environments/$(ENV)
 ANSIBLE_DIR := infra/ansible
+COMPOSE_DIR := local-lab/compose
 
 .PHONY: help
 help: ## Show this help
@@ -86,3 +87,29 @@ lab-up: ## Create the local kind cluster + platform baseline
 .PHONY: lab-down
 lab-down: ## Destroy the local lab
 	kind delete cluster --name learn-devops
+
+## ---------- local compose stack (keycloak + db + redis) ----------
+
+.PHONY: compose-up
+compose-up: ## Start the keycloak/db/redis stack
+	$(MAKE) -C $(COMPOSE_DIR) up
+
+.PHONY: compose-down
+compose-down: ## Stop the compose stack (volumes kept)
+	$(MAKE) -C $(COMPOSE_DIR) down
+
+.PHONY: compose-down-v
+compose-down-v: ## Stop the compose stack and delete its volumes
+	$(MAKE) -C $(COMPOSE_DIR) down-v
+
+.PHONY: compose-restart
+compose-restart: ## Restart every compose service
+	$(MAKE) -C $(COMPOSE_DIR) restart
+
+.PHONY: compose-ps
+compose-ps: ## List compose containers and health status
+	$(MAKE) -C $(COMPOSE_DIR) ps
+
+.PHONY: compose-logs
+compose-logs: ## Tail logs for all compose services
+	$(MAKE) -C $(COMPOSE_DIR) logs

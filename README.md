@@ -70,6 +70,7 @@ learn-devops/
 | 14 | [Promotion Procedure](docs/14-promotion-procedure.md) | dev→staging→preprod→prod, image build/tagging, CI variable injection |
 | 15 | [Logging & Monitoring Procedure](docs/15-logging-monitoring-procedure.md) | Loki/Kibana tiers, Grafana as code, Gravitee API metrics, alert lifecycle |
 | 16 | [Private-Access Deployment](docs/16-private-access-deployment.md) | Internal-only services: split-horizon + wildcard DNS/TLS, VPN, OIDC per app, verification matrix |
+| 17 | [Makefile Reference](docs/17-makefile-reference.md) | Every `make` target explained: lint, scan, terraform, ansible, gitops render/diff, local lab |
 
 **Reading order** — building: **11** → 01 → 02 → 03 → 05 → 10 → 04 → 06 → 07 ·
 learning: 00 → 03 → 01 → 04 → 06 → 07 → 08 · auditing: 03 → 07 → 09 ·
